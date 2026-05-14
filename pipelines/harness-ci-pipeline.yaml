@@ -1,22 +1,24 @@
 # =============================================================================
 # GuestFlow — Harness CI Pipeline
 # =============================================================================
-# Stages (4 total):
+# Stages (2 total):
 #
-#   1. CI                  — Single ephemeral env: install → typecheck → test
-#                            → sonar → openapi → build+push ECR → publish
-#                            Uses step groups to organise, cloneCodebase: true
+#   1. CI   — Single ephemeral runner, step groups mirror Makefile targets:
+#               Setup (make install)
+#               Quality (make typecheck)
+#               Test (make test-ci + coverage gate)
+#               SonarQube (make sonar)
+#               OpenAPI (make openapi + publish S3)
+#               Security — SAST / SCA / Container  ← all STO native steps,
+#                          Container scan runs after ECR push
+#               Build + Push (make build / make push via BuildAndPushECR)
 #
-#   2. Security Scans      — SecurityTests stage: Semgrep (SAST) + Grype (SCA)
-#                            in parallel step groups. cloneCodebase: true so
-#                            the runner gets source code independently.
+#   2. IDP  — type: IDP stage, posts all 6 custom check results to Harness IDP
+#             in parallel. Values come from CI stage STO output variables.
 #
-#   3. Container Scan      — SecurityTests stage: AquaTrivy on ECR images
-#                            (must run after CI pushes images to ECR)
-#
-#   4. IDP Scorecard       — CI stage: posts all 6 custom check results to
-#                            Harness IDP in parallel, reading values from
-#                            STO step output variables via Harness expressions.
+# Local mirror:
+#   make install && make typecheck && make test-ci && make openapi \
+#     && make scan-sast && make scan-sca && make build
 # =============================================================================
 
 pipeline:
@@ -24,7 +26,7 @@ pipeline:
   identifier: guestflow_ci
   projectIdentifier: Diego
   orgIdentifier: TPM
-  description: "Full CI pipeline: build/test/push → security scans → IDP scorecard"
+  description: "Full CI/CD pipeline — build, test, scan, push → IDP scorecard"
   tags:
     ci: ""
     guestflow: ""
@@ -39,7 +41,7 @@ pipeline:
   variables:
     - name: ECR_REGISTRY
       type: String
-      value: "123456789.dkr.ecr.us-east-1.amazonaws.com"   # <-- update AWS account ID
+      value: "123456789.dkr.ecr.us-east-1.amazonaws.com"
     - name: ECR_REGION
       type: String
       value: "us-east-1"
@@ -57,9 +59,10 @@ pipeline:
 
     # =========================================================================
     # STAGE 1 — CI
-    # One ephemeral runner handles everything: install, typecheck, test,
-    # sonar, openapi generation, docker build+push, and artifact publish.
-    # Step groups keep things organised without the overhead of extra stages.
+    # One ephemeral runner. Step groups mirror Makefile targets exactly.
+    # STO native steps (Semgrep / Grype / Trivy) run inline — no separate
+    # SecurityTests stage needed. Trivy is placed after ECR push so it can
+    # pull the freshly pushed images from the registry.
     # =========================================================================
     - stage:
         name: CI
@@ -82,7 +85,7 @@ pipeline:
           execution:
             steps:
 
-              # ── Step Group: Setup ─────────────────────────────────────────
+              # ── make install ─────────────────────────────────────────────
               - stepGroup:
                   name: Setup
                   identifier: setup
@@ -107,7 +110,7 @@ pipeline:
                               shell: Sh
                               command: cd frontend && npm ci
 
-              # ── Step Group: Quality ───────────────────────────────────────
+              # ── make typecheck ───────────────────────────────────────────
               - stepGroup:
                   name: Quality
                   identifier: quality
@@ -130,7 +133,7 @@ pipeline:
                               shell: Sh
                               command: cd frontend && npx tsc --noEmit
 
-              # ── Step Group: Test ──────────────────────────────────────────
+              # ── make test-ci + coverage gate ─────────────────────────────
               - stepGroup:
                   name: Test
                   identifier: test
@@ -191,7 +194,7 @@ pipeline:
                         when:
                           stageStatus: Success
 
-              # ── Step Group: SonarQube ─────────────────────────────────────
+              # ── make sonar ───────────────────────────────────────────────
               - stepGroup:
                   name: SonarQube
                   identifier: sonarqube
@@ -225,7 +228,7 @@ pipeline:
                             SONAR_HOST_URL: <+secrets.getValue("sonar_host_url")>
                             SONAR_TOKEN: <+secrets.getValue("sonar_token")>
 
-              # ── Step Group: OpenAPI ───────────────────────────────────────
+              # ── make openapi ─────────────────────────────────────────────
               - stepGroup:
                   name: OpenAPI
                   identifier: openapi
@@ -242,7 +245,6 @@ pipeline:
                             APP_VERSION=<+pipeline.sequenceId> \
                             GIT_COMMIT=<+codebase.commitSha> \
                             npm run generate:spec
-                            echo "Generated docs/openapi.yaml"
                             npx @stoplight/spectral-cli lint docs/openapi.yaml \
                               --ruleset https://unpkg.com/@stoplight/spectral-owasp-ruleset/dist/ruleset.mjs \
                               || echo "Spectral warnings (non-blocking)"
@@ -259,107 +261,18 @@ pipeline:
                               s3://guestflow-artifacts/openapi/latest/openapi.yaml
                             aws s3 cp backend/docs/openapi.json \
                               s3://guestflow-artifacts/openapi/latest/openapi.json
-                            echo "OpenAPI spec published to S3"
                           envVariables:
                             AWS_ACCESS_KEY_ID: <+secrets.getValue("aws_access_key_id")>
                             AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_access_key")>
                             AWS_DEFAULT_REGION: <+pipeline.variables.ECR_REGION>
 
-              # ── Step Group: Build and Push ECR ────────────────────────────
-              # BuildAndPushECR builds and pushes in a single step — no
-              # separate docker build needed. Runs both images in parallel.
+              # ── make scan-sast (SAST) ────────────────────────────────────
+              # Native STO steps — same scan logic as `make scan-sast` locally.
+              # Output variables (CRITICAL, HIGH, MEDIUM, LOW) are referenced
+              # by the IDP stage below via Harness expressions.
               - stepGroup:
-                  name: Build and Push ECR
-                  identifier: build_push_ecr
-                  steps:
-                    - parallel:
-                        - step:
-                            type: BuildAndPushECR
-                            name: Build and push backend to ECR
-                            identifier: push_backend_ecr
-                            spec:
-                              connectorRef: aws_connector     # <-- update to your AWS connector
-                              region: <+pipeline.variables.ECR_REGION>
-                              account: "123456789"            # <-- update AWS account ID
-                              imageName: guestflow-api
-                              tags:
-                                - <+pipeline.variables.IMAGE_TAG>
-                                - latest
-                              dockerfile: backend/Dockerfile
-                              context: backend
-                              buildArgs:
-                                APP_VERSION: <+pipeline.sequenceId>
-                                GIT_COMMIT: <+codebase.commitSha>
-                        - step:
-                            type: BuildAndPushECR
-                            name: Build and push frontend to ECR
-                            identifier: push_frontend_ecr
-                            spec:
-                              connectorRef: aws_connector     # <-- update to your AWS connector
-                              region: <+pipeline.variables.ECR_REGION>
-                              account: "123456789"            # <-- update AWS account ID
-                              imageName: guestflow-web
-                              tags:
-                                - <+pipeline.variables.IMAGE_TAG>
-                                - latest
-                              dockerfile: frontend/Dockerfile
-                              context: frontend
-                              buildArgs:
-                                VITE_API_BASE_URL: https://api.guestflow.internal
-
-              # ── Build manifest ────────────────────────────────────────────
-              - step:
-                  type: Run
-                  name: Build manifest summary
-                  identifier: build_manifest
-                  spec:
-                    shell: Sh
-                    command: |
-                      cat << EOF > /tmp/build-manifest.json
-                      {
-                        "pipeline": "<+pipeline.identifier>",
-                        "build": "<+pipeline.sequenceId>",
-                        "commit": "<+codebase.commitSha>",
-                        "branch": "<+codebase.branch>",
-                        "imageTag": "<+pipeline.variables.IMAGE_TAG>",
-                        "backendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-api:<+pipeline.variables.IMAGE_TAG>",
-                        "frontendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-web:<+pipeline.variables.IMAGE_TAG>",
-                        "openApiSpec": "s3://guestflow-artifacts/openapi/<+pipeline.variables.IMAGE_TAG>/openapi.yaml",
-                        "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-                      }
-                      EOF
-                      cat /tmp/build-manifest.json
-
-    # =========================================================================
-    # STAGE 2 — Security Scans (SAST + SCA)
-    # SecurityTests stage: clones the repo independently. Semgrep scans source
-    # code; Grype scans dependency trees. Both run in parallel step groups.
-    # =========================================================================
-    - stage:
-        name: Security Scans
-        identifier: security_scans
-        type: SecurityTests
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: true
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-
-              # ── Step Group: SAST ──────────────────────────────────────────
-              - stepGroup:
-                  name: SAST
-                  identifier: sast
+                  name: Security SAST
+                  identifier: security_sast
                   steps:
                     - step:
                         type: Semgrep
@@ -376,10 +289,10 @@ pipeline:
                             args:
                               cli: "--config=p/owasp-top-ten --config=p/nodejs --config=p/typescript"
 
-              # ── Step Group: SCA ───────────────────────────────────────────
+              # ── make scan-sca (SCA) ──────────────────────────────────────
               - stepGroup:
-                  name: SCA
-                  identifier: sca
+                  name: Security SCA
+                  identifier: security_sca
                   steps:
                     - parallel:
                         - step:
@@ -411,77 +324,120 @@ pipeline:
                               advanced:
                                 fail_on_severity: critical
 
-    # =========================================================================
-    # STAGE 3 — Container Scan
-    # Runs after Stage 1 pushes images to ECR. AquaTrivy pulls images directly
-    # from ECR via the aws_connector and scans for CVEs.
-    # =========================================================================
-    - stage:
-        name: Container Scan
-        identifier: container_scan
-        type: SecurityTests
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - parallel:
-                  - step:
-                      type: AquaTrivy
-                      name: Trivy scan backend image
-                      identifier: trivy_backend
-                      spec:
-                        mode: orchestration
-                        config: default
-                        connectorRef: aws_connector
-                        target:
-                          type: container
-                          name: <+pipeline.variables.ECR_REGISTRY>/guestflow-api
-                          variant: <+pipeline.variables.IMAGE_TAG>
-                        advanced:
-                          fail_on_severity: critical
-                  - step:
-                      type: AquaTrivy
-                      name: Trivy scan frontend image
-                      identifier: trivy_frontend
-                      spec:
-                        mode: orchestration
-                        config: default
-                        connectorRef: aws_connector
-                        target:
-                          type: container
-                          name: <+pipeline.variables.ECR_REGISTRY>/guestflow-web
-                          variant: <+pipeline.variables.IMAGE_TAG>
-                        advanced:
-                          fail_on_severity: critical
+              # ── make build / make push (BuildAndPushECR) ─────────────────
+              - stepGroup:
+                  name: Build and Push ECR
+                  identifier: build_push_ecr
+                  steps:
+                    - parallel:
+                        - step:
+                            type: BuildAndPushECR
+                            name: Build and push backend to ECR
+                            identifier: push_backend_ecr
+                            spec:
+                              connectorRef: aws_connector
+                              region: <+pipeline.variables.ECR_REGION>
+                              account: "123456789"
+                              imageName: guestflow-api
+                              tags:
+                                - <+pipeline.variables.IMAGE_TAG>
+                                - latest
+                              dockerfile: backend/Dockerfile
+                              context: backend
+                              buildArgs:
+                                APP_VERSION: <+pipeline.sequenceId>
+                                GIT_COMMIT: <+codebase.commitSha>
+                        - step:
+                            type: BuildAndPushECR
+                            name: Build and push frontend to ECR
+                            identifier: push_frontend_ecr
+                            spec:
+                              connectorRef: aws_connector
+                              region: <+pipeline.variables.ECR_REGION>
+                              account: "123456789"
+                              imageName: guestflow-web
+                              tags:
+                                - <+pipeline.variables.IMAGE_TAG>
+                                - latest
+                              dockerfile: frontend/Dockerfile
+                              context: frontend
+                              buildArgs:
+                                VITE_API_BASE_URL: https://api.guestflow.internal
+
+              # ── make scan-container (Trivy) ──────────────────────────────
+              # Runs AFTER ECR push so Trivy can pull the freshly built images.
+              - stepGroup:
+                  name: Security Container
+                  identifier: security_container
+                  steps:
+                    - parallel:
+                        - step:
+                            type: AquaTrivy
+                            name: Trivy scan backend image
+                            identifier: trivy_backend
+                            spec:
+                              mode: orchestration
+                              config: default
+                              connectorRef: aws_connector
+                              target:
+                                type: container
+                                name: <+pipeline.variables.ECR_REGISTRY>/guestflow-api
+                                variant: <+pipeline.variables.IMAGE_TAG>
+                              advanced:
+                                fail_on_severity: critical
+                        - step:
+                            type: AquaTrivy
+                            name: Trivy scan frontend image
+                            identifier: trivy_frontend
+                            spec:
+                              mode: orchestration
+                              config: default
+                              connectorRef: aws_connector
+                              target:
+                                type: container
+                                name: <+pipeline.variables.ECR_REGISTRY>/guestflow-web
+                                variant: <+pipeline.variables.IMAGE_TAG>
+                              advanced:
+                                fail_on_severity: critical
+
+              # ── Build manifest ────────────────────────────────────────────
+              - step:
+                  type: Run
+                  name: Build manifest summary
+                  identifier: build_manifest
+                  spec:
+                    shell: Sh
+                    command: |
+                      cat << EOF
+                      {
+                        "pipeline": "<+pipeline.identifier>",
+                        "build": "<+pipeline.sequenceId>",
+                        "commit": "<+codebase.commitSha>",
+                        "branch": "<+codebase.branch>",
+                        "imageTag": "<+pipeline.variables.IMAGE_TAG>",
+                        "backendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-api:<+pipeline.variables.IMAGE_TAG>",
+                        "frontendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-web:<+pipeline.variables.IMAGE_TAG>",
+                        "openApiSpec": "s3://guestflow-artifacts/openapi/<+pipeline.variables.IMAGE_TAG>/openapi.yaml",
+                        "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                      }
+                      EOF
 
     # =========================================================================
-    # STAGE 4 — IDP Scorecard Checks
-    # Posts all 6 custom check results to Harness IDP in parallel.
-    # Finding counts come from STO step output variables via Harness expressions
-    # — no extra API calls needed.
+    # STAGE 2 — IDP
+    # Native IDP stage type. Posts all 6 custom scorecard check results to
+    # Harness IDP in parallel. Counts come directly from CI stage STO step
+    # output variables — no extra API calls or manual values.
     # =========================================================================
     - stage:
         name: IDP Scorecard Checks
         identifier: idp_scorecard_checks
-        type: CI
+        type: IDP
         failureStrategies:
           - onFailure:
               errors:
                 - AllErrors
               action:
-                type: StageRollback
+                type: Ignore
         spec:
           cloneCodebase: false
           platform:
@@ -494,6 +450,7 @@ pipeline:
             steps:
               - parallel:
 
+                  # ── Test coverage ──────────────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - Test Coverage
@@ -518,8 +475,8 @@ pipeline:
                                 \"buildId\": \"<+pipeline.sequenceId>\"
                               }
                             }"
-                          echo "IDP check backend_test_coverage: $STATUS (${COVERAGE:-0}%)"
 
+                  # ── SonarQube quality gate ─────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - SonarQube Quality Gate
@@ -545,8 +502,8 @@ pipeline:
                                 \"buildId\": \"<+pipeline.sequenceId>\"
                               }
                             }"
-                          echo "IDP check sonar_quality_gate: $STATUS ($GATE)"
 
+                  # ── SAST ──────────────────────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - SAST No Critical Findings
@@ -554,8 +511,8 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          CRITICAL=<+pipeline.stages.security_scans.spec.execution.steps.sast.steps.semgrep_scan.output.outputVariables.CRITICAL>
-                          HIGH=<+pipeline.stages.security_scans.spec.execution.steps.sast.steps.semgrep_scan.output.outputVariables.HIGH>
+                          CRITICAL=<+pipeline.stages.ci.spec.execution.steps.security_sast.steps.semgrep_scan.output.outputVariables.CRITICAL>
+                          HIGH=<+pipeline.stages.ci.spec.execution.steps.security_sast.steps.semgrep_scan.output.outputVariables.HIGH>
                           CRITICAL=${CRITICAL:-0}
                           HIGH=${HIGH:-0}
                           STATUS=$([ "$CRITICAL" -eq 0 ] && echo PASS || echo FAIL)
@@ -574,8 +531,8 @@ pipeline:
                                 \"buildId\": \"<+pipeline.sequenceId>\"
                               }
                             }"
-                          echo "IDP check sast_no_critical_findings: $STATUS (critical=$CRITICAL, high=$HIGH)"
 
+                  # ── SCA ───────────────────────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - SCA No Critical Vulnerabilities
@@ -583,10 +540,10 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          BE_CRIT=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_backend.output.outputVariables.CRITICAL>
-                          FE_CRIT=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_frontend.output.outputVariables.CRITICAL>
-                          BE_HIGH=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_backend.output.outputVariables.HIGH>
-                          FE_HIGH=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_frontend.output.outputVariables.HIGH>
+                          BE_CRIT=<+pipeline.stages.ci.spec.execution.steps.security_sca.steps.grype_backend.output.outputVariables.CRITICAL>
+                          FE_CRIT=<+pipeline.stages.ci.spec.execution.steps.security_sca.steps.grype_frontend.output.outputVariables.CRITICAL>
+                          BE_HIGH=<+pipeline.stages.ci.spec.execution.steps.security_sca.steps.grype_backend.output.outputVariables.HIGH>
+                          FE_HIGH=<+pipeline.stages.ci.spec.execution.steps.security_sca.steps.grype_frontend.output.outputVariables.HIGH>
                           CRITICAL=$(( ${BE_CRIT:-0} + ${FE_CRIT:-0} ))
                           HIGH=$(( ${BE_HIGH:-0} + ${FE_HIGH:-0} ))
                           STATUS=$([ "$CRITICAL" -eq 0 ] && echo PASS || echo FAIL)
@@ -605,8 +562,8 @@ pipeline:
                                 \"buildId\": \"<+pipeline.sequenceId>\"
                               }
                             }"
-                          echo "IDP check sca_no_critical_vulnerabilities: $STATUS (critical=$CRITICAL, high=$HIGH)"
 
+                  # ── Container scan ────────────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - Container Scan No Critical CVEs
@@ -614,10 +571,10 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          BE_CRIT=<+pipeline.stages.container_scan.spec.execution.steps.trivy_backend.output.outputVariables.CRITICAL>
-                          FE_CRIT=<+pipeline.stages.container_scan.spec.execution.steps.trivy_frontend.output.outputVariables.CRITICAL>
-                          BE_HIGH=<+pipeline.stages.container_scan.spec.execution.steps.trivy_backend.output.outputVariables.HIGH>
-                          FE_HIGH=<+pipeline.stages.container_scan.spec.execution.steps.trivy_frontend.output.outputVariables.HIGH>
+                          BE_CRIT=<+pipeline.stages.ci.spec.execution.steps.security_container.steps.trivy_backend.output.outputVariables.CRITICAL>
+                          FE_CRIT=<+pipeline.stages.ci.spec.execution.steps.security_container.steps.trivy_frontend.output.outputVariables.CRITICAL>
+                          BE_HIGH=<+pipeline.stages.ci.spec.execution.steps.security_container.steps.trivy_backend.output.outputVariables.HIGH>
+                          FE_HIGH=<+pipeline.stages.ci.spec.execution.steps.security_container.steps.trivy_frontend.output.outputVariables.HIGH>
                           CRITICAL=$(( ${BE_CRIT:-0} + ${FE_CRIT:-0} ))
                           HIGH=$(( ${BE_HIGH:-0} + ${FE_HIGH:-0} ))
                           STATUS=$([ "$CRITICAL" -eq 0 ] && echo PASS || echo FAIL)
@@ -636,8 +593,8 @@ pipeline:
                                 \"buildId\": \"<+pipeline.sequenceId>\"
                               }
                             }"
-                          echo "IDP check container_scan_no_critical_cve: $STATUS (critical=$CRITICAL, high=$HIGH)"
 
+                  # ── OpenAPI published ─────────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - OpenAPI Spec Published
@@ -660,7 +617,6 @@ pipeline:
                                 \"buildId\": \"<+pipeline.sequenceId>\"
                               }
                             }"
-                          echo "IDP check openapi_spec_published: PASS"
 
   notificationRules:
     - name: Notify on failure
