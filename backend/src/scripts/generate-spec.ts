@@ -144,8 +144,9 @@ function main() {
 
   console.log(`✅  OpenAPI YAML written to: ${outputPath}`);
   console.log(`✅  OpenAPI JSON written to: ${jsonOutputPath}`);
-  console.log(`📄  Paths documented: ${Object.keys(spec.paths ?? {}).length}`);
-  console.log(`📦  Schemas defined:  ${Object.keys(spec.components?.schemas ?? {}).length}`);
+  const openapi = spec as { paths?: object; components?: { schemas?: object } };
+  console.log(`📄  Paths documented: ${Object.keys(openapi.paths ?? {}).length}`);
+  console.log(`📦  Schemas defined:  ${Object.keys(openapi.components?.schemas ?? {}).length}`);
 }
 
 main();
