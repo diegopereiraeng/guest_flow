@@ -1,19 +1,22 @@
 # =============================================================================
 # GuestFlow — Harness CI Pipeline
 # =============================================================================
-# Stages:
-#   1.  setup          → install dependencies
-#   2.  quality        → typecheck (backend + frontend in parallel)
-#   3.  test           → vitest + coverage gate (80%)
-#   4.  sonar          → SonarQube analysis + quality gate
-#   5.  generate_spec  → OpenAPI spec auto-generated from JSDoc
-#   6.  sast_semgrep   → [STO native] Semgrep SAST — repository scan
-#   7.  sca_grype      → [STO native] Grype SCA — dependency scan
-#   8.  build_images   → Docker build (backend + frontend in parallel)
-#   9.  push_ecr       → BuildAndPushECR native steps (backend + frontend)
-#  10.  container_scan → [STO native] AquaTrivy — container image scan (from ECR)
-#  11.  publish_arts   → Upload OpenAPI spec to S3 + build manifest
-#  12.  idp_checks     → Publish custom check results to Harness IDP scorecard
+# Stages (4 total):
+#
+#   1. CI                  — Single ephemeral env: install → typecheck → test
+#                            → sonar → openapi → build+push ECR → publish
+#                            Uses step groups to organise, cloneCodebase: true
+#
+#   2. Security Scans      — SecurityTests stage: Semgrep (SAST) + Grype (SCA)
+#                            in parallel step groups. cloneCodebase: true so
+#                            the runner gets source code independently.
+#
+#   3. Container Scan      — SecurityTests stage: AquaTrivy on ECR images
+#                            (must run after CI pushes images to ECR)
+#
+#   4. IDP Scorecard       — CI stage: posts all 6 custom check results to
+#                            Harness IDP in parallel, reading values from
+#                            STO step output variables via Harness expressions.
 # =============================================================================
 
 pipeline:
@@ -21,7 +24,7 @@ pipeline:
   identifier: guestflow_ci
   projectIdentifier: Diego
   orgIdentifier: TPM
-  description: "Full CI pipeline: test → quality → STO security → ECR push → IDP scorecard"
+  description: "Full CI pipeline: build/test/push → security scans → IDP scorecard"
   tags:
     ci: ""
     guestflow: ""
@@ -30,7 +33,7 @@ pipeline:
     ci:
       codebase:
         connectorRef: github_connector          # <-- update to your GitHub connector
-        repoName: your-org/guestflow
+        repoName: diegopereiraeng/guest_flow
         build: <+input>
 
   variables:
@@ -51,12 +54,16 @@ pipeline:
       value: "80"
 
   stages:
-    # -------------------------------------------------------------------------
-    # STAGE 1 — Setup & Install
-    # -------------------------------------------------------------------------
+
+    # =========================================================================
+    # STAGE 1 — CI
+    # One ephemeral runner handles everything: install, typecheck, test,
+    # sonar, openapi generation, docker build+push, and artifact publish.
+    # Step groups keep things organised without the overhead of extra stages.
+    # =========================================================================
     - stage:
-        name: Setup
-        identifier: setup
+        name: CI
+        identifier: ci
         type: CI
         failureStrategies:
           - onFailure:
@@ -74,267 +81,254 @@ pipeline:
             spec: {}
           execution:
             steps:
-              - parallel:
-                  - step:
-                      type: Run
-                      name: Install backend deps
-                      identifier: install_backend
-                      spec:
-                        shell: Sh
-                        command: |
-                          cd backend && npm ci
-                        envVariables:
-                          NODE_ENV: test
 
-                  - step:
-                      type: Run
-                      name: Install frontend deps
-                      identifier: install_frontend
-                      spec:
-                        shell: Sh
-                        command: |
-                          cd frontend && npm ci
+              # ── Step Group: Setup ─────────────────────────────────────────
+              - stepGroup:
+                  name: Setup
+                  identifier: setup
+                  steps:
+                    - parallel:
+                        - step:
+                            type: Run
+                            name: Install backend deps
+                            identifier: install_backend
+                            spec:
+                              shell: Sh
+                              command: cd backend && npm ci
+                              envVariables:
+                                NODE_ENV: test
+                        - step:
+                            type: Run
+                            name: Install frontend deps
+                            identifier: install_frontend
+                            spec:
+                              shell: Sh
+                              command: cd frontend && npm ci
 
-    # -------------------------------------------------------------------------
-    # STAGE 2 — Quality (typecheck)
-    # -------------------------------------------------------------------------
-    - stage:
-        name: Quality Checks
-        identifier: quality_checks
-        type: CI
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - parallel:
-                  - step:
-                      type: Run
-                      name: TypeCheck backend
-                      identifier: typecheck_backend
-                      spec:
-                        shell: Sh
-                        command: cd backend && npm ci && npx tsc --noEmit
+              # ── Step Group: Quality ───────────────────────────────────────
+              - stepGroup:
+                  name: Quality
+                  identifier: quality
+                  steps:
+                    - parallel:
+                        - step:
+                            type: Run
+                            name: TypeCheck backend
+                            identifier: typecheck_backend
+                            spec:
+                              shell: Sh
+                              command: cd backend && npx tsc --noEmit
+                        - step:
+                            type: Run
+                            name: TypeCheck frontend
+                            identifier: typecheck_frontend
+                            spec:
+                              shell: Sh
+                              command: cd frontend && npx tsc --noEmit
 
-                  - step:
-                      type: Run
-                      name: TypeCheck frontend
-                      identifier: typecheck_frontend
-                      spec:
-                        shell: Sh
-                        command: cd frontend && npm ci && npx tsc --noEmit
+              # ── Step Group: Test ──────────────────────────────────────────
+              - stepGroup:
+                  name: Test
+                  identifier: test
+                  steps:
+                    - parallel:
+                        - step:
+                            type: Run
+                            name: Backend tests and coverage
+                            identifier: backend_tests
+                            spec:
+                              shell: Sh
+                              command: |
+                                cd backend
+                                mkdir -p test-results
+                                npm run test:ci
+                                COVERAGE=$(cat coverage/coverage-summary.json | \
+                                  node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); \
+                                  const j=JSON.parse(d); console.log(j.total.lines.pct)")
+                                echo "BACKEND_COVERAGE=$COVERAGE" >> $HARNESS_OUTPUT_SECRET_FILE
+                              reports:
+                                type: JUnit
+                                spec:
+                                  paths:
+                                    - backend/test-results/junit.xml
+                        - step:
+                            type: Run
+                            name: Frontend tests and coverage
+                            identifier: frontend_tests
+                            spec:
+                              shell: Sh
+                              command: |
+                                cd frontend
+                                npm test -- --coverage
+                              reports:
+                                type: JUnit
+                                spec:
+                                  paths:
+                                    - frontend/test-results/junit.xml
+                    - step:
+                        type: Run
+                        name: Enforce coverage threshold
+                        identifier: coverage_gate
+                        spec:
+                          shell: Sh
+                          command: |
+                            COVERAGE=${BACKEND_COVERAGE:-0}
+                            THRESHOLD=<+pipeline.variables.COVERAGE_THRESHOLD>
+                            echo "Coverage: ${COVERAGE}%  |  Threshold: ${THRESHOLD}%"
+                            if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+                              echo "FAIL Coverage ${COVERAGE}% below threshold ${THRESHOLD}%"
+                              exit 1
+                            fi
+                            echo "PASS Coverage gate passed"
+                        when:
+                          stageStatus: Success
 
-    # -------------------------------------------------------------------------
-    # STAGE 3 — Tests + Coverage
-    # -------------------------------------------------------------------------
-    - stage:
-        name: Test
-        identifier: test
-        type: CI
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - parallel:
-                  - step:
-                      type: Run
-                      name: Backend tests and coverage
-                      identifier: backend_tests
-                      spec:
-                        shell: Sh
-                        command: |
-                          cd backend
-                          npm ci
-                          mkdir -p test-results
-                          npm run test:ci
-                          COVERAGE=$(cat coverage/coverage-summary.json | \
-                            node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); \
-                            const j=JSON.parse(d); \
-                            console.log(j.total.lines.pct)")
-                          echo "BACKEND_COVERAGE=$COVERAGE" >> $HARNESS_OUTPUT_SECRET_FILE
-                        reports:
-                          type: JUnit
-                          spec:
-                            paths:
-                              - backend/test-results/junit.xml
+              # ── Step Group: SonarQube ─────────────────────────────────────
+              - stepGroup:
+                  name: SonarQube
+                  identifier: sonarqube
+                  steps:
+                    - step:
+                        type: Run
+                        name: SonarQube scan and quality gate
+                        identifier: sonar_scan
+                        spec:
+                          shell: Sh
+                          command: |
+                            sonar-scanner \
+                              -Dsonar.projectKey=<+pipeline.variables.SONAR_PROJECT_KEY> \
+                              -Dsonar.sources=backend/src,frontend/src \
+                              -Dsonar.tests=backend/tests,frontend/src/tests \
+                              -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info \
+                              -Dsonar.testExecutionReportPaths=backend/test-results/junit.xml \
+                              -Dsonar.qualitygate.wait=true \
+                              -Dsonar.host.url=$SONAR_HOST_URL \
+                              -Dsonar.login=$SONAR_TOKEN
 
-                  - step:
-                      type: Run
-                      name: Frontend tests and coverage
-                      identifier: frontend_tests
-                      spec:
-                        shell: Sh
-                        command: |
-                          cd frontend
-                          npm ci
-                          npm test -- --coverage
-                        reports:
-                          type: JUnit
-                          spec:
-                            paths:
-                              - frontend/test-results/junit.xml
+                            STATUS=$(curl -s -u "$SONAR_TOKEN:" \
+                              "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=<+pipeline.variables.SONAR_PROJECT_KEY>" \
+                              | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); \
+                                console.log(JSON.parse(d).projectStatus.status)")
 
+                            echo "SONAR_QUALITY_GATE=$STATUS" >> $HARNESS_OUTPUT_SECRET_FILE
+                            echo "SonarQube Quality Gate: $STATUS"
+                            [ "$STATUS" = "OK" ] || { echo "FAIL Quality gate: $STATUS"; exit 1; }
+                          envVariables:
+                            SONAR_HOST_URL: <+secrets.getValue("sonar_host_url")>
+                            SONAR_TOKEN: <+secrets.getValue("sonar_token")>
+
+              # ── Step Group: OpenAPI ───────────────────────────────────────
+              - stepGroup:
+                  name: OpenAPI
+                  identifier: openapi
+                  steps:
+                    - step:
+                        type: Run
+                        name: Generate and validate OpenAPI spec
+                        identifier: gen_openapi
+                        spec:
+                          shell: Sh
+                          command: |
+                            cd backend
+                            APP_VERSION=<+pipeline.sequenceId> \
+                            GIT_COMMIT=<+codebase.commitSha> \
+                            npm run generate:spec
+                            echo "Generated docs/openapi.yaml"
+                            npx @stoplight/spectral-cli lint docs/openapi.yaml \
+                              --ruleset https://unpkg.com/@stoplight/spectral-owasp-ruleset/dist/ruleset.mjs \
+                              || echo "Spectral warnings (non-blocking)"
+                    - step:
+                        type: Run
+                        name: Publish OpenAPI spec to S3
+                        identifier: publish_openapi
+                        spec:
+                          shell: Sh
+                          command: |
+                            aws s3 cp backend/docs/openapi.yaml \
+                              s3://guestflow-artifacts/openapi/<+pipeline.variables.IMAGE_TAG>/openapi.yaml
+                            aws s3 cp backend/docs/openapi.yaml \
+                              s3://guestflow-artifacts/openapi/latest/openapi.yaml
+                            aws s3 cp backend/docs/openapi.json \
+                              s3://guestflow-artifacts/openapi/latest/openapi.json
+                            echo "OpenAPI spec published to S3"
+                          envVariables:
+                            AWS_ACCESS_KEY_ID: <+secrets.getValue("aws_access_key_id")>
+                            AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_access_key")>
+                            AWS_DEFAULT_REGION: <+pipeline.variables.ECR_REGION>
+
+              # ── Step Group: Build and Push ECR ────────────────────────────
+              # BuildAndPushECR builds and pushes in a single step — no
+              # separate docker build needed. Runs both images in parallel.
+              - stepGroup:
+                  name: Build and Push ECR
+                  identifier: build_push_ecr
+                  steps:
+                    - parallel:
+                        - step:
+                            type: BuildAndPushECR
+                            name: Build and push backend to ECR
+                            identifier: push_backend_ecr
+                            spec:
+                              connectorRef: aws_connector     # <-- update to your AWS connector
+                              region: <+pipeline.variables.ECR_REGION>
+                              account: "123456789"            # <-- update AWS account ID
+                              imageName: guestflow-api
+                              tags:
+                                - <+pipeline.variables.IMAGE_TAG>
+                                - latest
+                              dockerfile: backend/Dockerfile
+                              context: backend
+                              buildArgs:
+                                APP_VERSION: <+pipeline.sequenceId>
+                                GIT_COMMIT: <+codebase.commitSha>
+                        - step:
+                            type: BuildAndPushECR
+                            name: Build and push frontend to ECR
+                            identifier: push_frontend_ecr
+                            spec:
+                              connectorRef: aws_connector     # <-- update to your AWS connector
+                              region: <+pipeline.variables.ECR_REGION>
+                              account: "123456789"            # <-- update AWS account ID
+                              imageName: guestflow-web
+                              tags:
+                                - <+pipeline.variables.IMAGE_TAG>
+                                - latest
+                              dockerfile: frontend/Dockerfile
+                              context: frontend
+                              buildArgs:
+                                VITE_API_BASE_URL: https://api.guestflow.internal
+
+              # ── Build manifest ────────────────────────────────────────────
               - step:
                   type: Run
-                  name: Enforce coverage threshold
-                  identifier: coverage_gate
+                  name: Build manifest summary
+                  identifier: build_manifest
                   spec:
                     shell: Sh
                     command: |
-                      COVERAGE=${BACKEND_COVERAGE:-0}
-                      THRESHOLD=<+pipeline.variables.COVERAGE_THRESHOLD>
-                      echo "Coverage: ${COVERAGE}%  |  Threshold: ${THRESHOLD}%"
-                      if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
-                        echo "FAIL Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
-                        exit 1
-                      fi
-                      echo "PASS Coverage gate passed"
-                  when:
-                    stageStatus: Success
+                      cat << EOF > /tmp/build-manifest.json
+                      {
+                        "pipeline": "<+pipeline.identifier>",
+                        "build": "<+pipeline.sequenceId>",
+                        "commit": "<+codebase.commitSha>",
+                        "branch": "<+codebase.branch>",
+                        "imageTag": "<+pipeline.variables.IMAGE_TAG>",
+                        "backendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-api:<+pipeline.variables.IMAGE_TAG>",
+                        "frontendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-web:<+pipeline.variables.IMAGE_TAG>",
+                        "openApiSpec": "s3://guestflow-artifacts/openapi/<+pipeline.variables.IMAGE_TAG>/openapi.yaml",
+                        "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                      }
+                      EOF
+                      cat /tmp/build-manifest.json
 
-    # -------------------------------------------------------------------------
-    # STAGE 4 — SonarQube Analysis + Quality Gate
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # STAGE 2 — Security Scans (SAST + SCA)
+    # SecurityTests stage: clones the repo independently. Semgrep scans source
+    # code; Grype scans dependency trees. Both run in parallel step groups.
+    # =========================================================================
     - stage:
-        name: SonarQube
-        identifier: sonarqube
-        type: CI
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - step:
-                  type: Run
-                  name: SonarQube scan
-                  identifier: sonar_scan
-                  spec:
-                    shell: Sh
-                    command: |
-                      sonar-scanner \
-                        -Dsonar.projectKey=<+pipeline.variables.SONAR_PROJECT_KEY> \
-                        -Dsonar.sources=backend/src,frontend/src \
-                        -Dsonar.tests=backend/tests,frontend/src/tests \
-                        -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info \
-                        -Dsonar.testExecutionReportPaths=backend/test-results/junit.xml \
-                        -Dsonar.qualitygate.wait=true \
-                        -Dsonar.host.url=$SONAR_HOST_URL \
-                        -Dsonar.login=$SONAR_TOKEN
-                    envVariables:
-                      SONAR_HOST_URL: <+secrets.getValue("sonar_host_url")>
-                      SONAR_TOKEN: <+secrets.getValue("sonar_token")>
-
-              - step:
-                  type: Run
-                  name: Export SonarQube quality gate result
-                  identifier: sonar_gate_export
-                  spec:
-                    shell: Sh
-                    command: |
-                      STATUS=$(curl -s -u "$SONAR_TOKEN:" \
-                        "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=<+pipeline.variables.SONAR_PROJECT_KEY>" \
-                        | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); \
-                          console.log(JSON.parse(d).projectStatus.status)")
-                      echo "SONAR_QUALITY_GATE=$STATUS" >> $HARNESS_OUTPUT_SECRET_FILE
-                      echo "SonarQube Quality Gate: $STATUS"
-                      if [ "$STATUS" != "OK" ]; then
-                        echo "FAIL SonarQube quality gate FAILED"
-                        exit 1
-                      fi
-                    envVariables:
-                      SONAR_HOST_URL: <+secrets.getValue("sonar_host_url")>
-                      SONAR_TOKEN: <+secrets.getValue("sonar_token")>
-
-    # -------------------------------------------------------------------------
-    # STAGE 5 — Generate & Validate OpenAPI Spec
-    # -------------------------------------------------------------------------
-    - stage:
-        name: Generate OpenAPI Spec
-        identifier: generate_spec
-        type: CI
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - step:
-                  type: Run
-                  name: Generate openapi.yaml from JSDoc
-                  identifier: gen_openapi
-                  spec:
-                    shell: Sh
-                    command: |
-                      cd backend
-                      npm ci
-                      APP_VERSION=<+pipeline.sequenceId> \
-                      GIT_COMMIT=<+codebase.commitSha> \
-                      npm run generate:spec
-                      echo "Generated docs/openapi.yaml"
-                      head -20 docs/openapi.yaml
-
-              - step:
-                  type: Run
-                  name: Validate OpenAPI spec with Spectral
-                  identifier: validate_openapi
-                  spec:
-                    shell: Sh
-                    command: |
-                      cd backend
-                      npx @stoplight/spectral-cli lint docs/openapi.yaml \
-                        --ruleset https://unpkg.com/@stoplight/spectral-owasp-ruleset/dist/ruleset.mjs \
-                        || echo "Spectral warnings found (non-blocking)"
-
-    # -------------------------------------------------------------------------
-    # STAGE 6 — SAST: Semgrep (STO native step)
-    # -------------------------------------------------------------------------
-    - stage:
-        name: SAST Semgrep
-        identifier: sast_semgrep
+        name: Security Scans
+        identifier: security_scans
         type: SecurityTests
         failureStrategies:
           - onFailure:
@@ -343,7 +337,7 @@ pipeline:
               action:
                 type: StageRollback
         spec:
-          cloneCodebase: false
+          cloneCodebase: true
           platform:
             os: Linux
             arch: Amd64
@@ -352,191 +346,70 @@ pipeline:
             spec: {}
           execution:
             steps:
-              - step:
-                  type: Semgrep
-                  name: Semgrep SAST scan
-                  identifier: semgrep_scan
-                  spec:
-                    mode: orchestration
-                    config: auto-only           # runs: auto + owasp-top-ten + nodejs + typescript
-                    target:
-                      type: repository
-                      detection: auto
-                    advanced:
-                      fail_on_severity: critical
-                      args:
-                        cli: "--config=p/owasp-top-ten --config=p/nodejs --config=p/typescript"
 
-    # -------------------------------------------------------------------------
-    # STAGE 7 — SCA: Grype (STO native step)
-    # -------------------------------------------------------------------------
+              # ── Step Group: SAST ──────────────────────────────────────────
+              - stepGroup:
+                  name: SAST
+                  identifier: sast
+                  steps:
+                    - step:
+                        type: Semgrep
+                        name: Semgrep SAST scan
+                        identifier: semgrep_scan
+                        spec:
+                          mode: orchestration
+                          config: auto-only
+                          target:
+                            type: repository
+                            detection: auto
+                          advanced:
+                            fail_on_severity: critical
+                            args:
+                              cli: "--config=p/owasp-top-ten --config=p/nodejs --config=p/typescript"
+
+              # ── Step Group: SCA ───────────────────────────────────────────
+              - stepGroup:
+                  name: SCA
+                  identifier: sca
+                  steps:
+                    - parallel:
+                        - step:
+                            type: Grype
+                            name: Grype SCA backend
+                            identifier: grype_backend
+                            spec:
+                              mode: orchestration
+                              config: default
+                              target:
+                                type: repository
+                                name: guestflow-backend
+                                variant: <+codebase.branch>
+                                workspace: /harness/backend
+                              advanced:
+                                fail_on_severity: critical
+                        - step:
+                            type: Grype
+                            name: Grype SCA frontend
+                            identifier: grype_frontend
+                            spec:
+                              mode: orchestration
+                              config: default
+                              target:
+                                type: repository
+                                name: guestflow-frontend
+                                variant: <+codebase.branch>
+                                workspace: /harness/frontend
+                              advanced:
+                                fail_on_severity: critical
+
+    # =========================================================================
+    # STAGE 3 — Container Scan
+    # Runs after Stage 1 pushes images to ECR. AquaTrivy pulls images directly
+    # from ECR via the aws_connector and scans for CVEs.
+    # =========================================================================
     - stage:
-        name: SCA Grype
-        identifier: sca_grype
-        type: SecurityTests
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - parallel:
-                  - step:
-                      type: Grype
-                      name: Grype SCA backend
-                      identifier: grype_backend
-                      spec:
-                        mode: orchestration
-                        config: default
-                        target:
-                          type: repository
-                          name: guestflow-backend
-                          variant: <+codebase.branch>
-                          workspace: /harness/backend
-                        advanced:
-                          fail_on_severity: critical
-
-                  - step:
-                      type: Grype
-                      name: Grype SCA frontend
-                      identifier: grype_frontend
-                      spec:
-                        mode: orchestration
-                        config: default
-                        target:
-                          type: repository
-                          name: guestflow-frontend
-                          variant: <+codebase.branch>
-                          workspace: /harness/frontend
-                        advanced:
-                          fail_on_severity: critical
-
-    # -------------------------------------------------------------------------
-    # STAGE 8 — Build Docker Images
-    # -------------------------------------------------------------------------
-    - stage:
-        name: Build Images
-        identifier: build_images
-        type: CI
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - parallel:
-                  - step:
-                      type: Run
-                      name: Build backend image
-                      identifier: build_backend_image
-                      spec:
-                        shell: Sh
-                        command: |
-                          docker build \
-                            --build-arg APP_VERSION=<+pipeline.sequenceId> \
-                            --build-arg GIT_COMMIT=<+codebase.commitSha> \
-                            -t guestflow-api:<+pipeline.variables.IMAGE_TAG> \
-                            -t guestflow-api:latest \
-                            ./backend
-
-                  - step:
-                      type: Run
-                      name: Build frontend image
-                      identifier: build_frontend_image
-                      spec:
-                        shell: Sh
-                        command: |
-                          docker build \
-                            --build-arg VITE_API_BASE_URL=https://api.guestflow.internal \
-                            -t guestflow-web:<+pipeline.variables.IMAGE_TAG> \
-                            -t guestflow-web:latest \
-                            ./frontend
-
-    # -------------------------------------------------------------------------
-    # STAGE 9 — Push to Amazon ECR (BuildAndPushECR native step)
-    # -------------------------------------------------------------------------
-    - stage:
-        name: Push to ECR
-        identifier: push_ecr
-        type: CI
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - parallel:
-                  - step:
-                      type: BuildAndPushECR
-                      name: Push backend to ECR
-                      identifier: push_backend_ecr
-                      spec:
-                        connectorRef: aws_connector     # <-- update to your AWS connector
-                        region: <+pipeline.variables.ECR_REGION>
-                        account: "123456789"            # <-- update AWS account ID
-                        imageName: guestflow-api
-                        tags:
-                          - <+pipeline.variables.IMAGE_TAG>
-                          - latest
-                        dockerfile: backend/Dockerfile
-                        context: backend
-                        buildArgs:
-                          APP_VERSION: <+pipeline.sequenceId>
-                          GIT_COMMIT: <+codebase.commitSha>
-
-                  - step:
-                      type: BuildAndPushECR
-                      name: Push frontend to ECR
-                      identifier: push_frontend_ecr
-                      spec:
-                        connectorRef: aws_connector     # <-- update to your AWS connector
-                        region: <+pipeline.variables.ECR_REGION>
-                        account: "123456789"            # <-- update AWS account ID
-                        imageName: guestflow-web
-                        tags:
-                          - <+pipeline.variables.IMAGE_TAG>
-                          - latest
-                        dockerfile: frontend/Dockerfile
-                        context: frontend
-                        buildArgs:
-                          VITE_API_BASE_URL: https://api.guestflow.internal
-
-    # -------------------------------------------------------------------------
-    # STAGE 10 — Container Scan: AquaTrivy (STO native step, scans from ECR)
-    # -------------------------------------------------------------------------
-    - stage:
-        name: Container Scan Trivy
-        identifier: container_scan_trivy
+        name: Container Scan
+        identifier: container_scan
         type: SecurityTests
         failureStrategies:
           - onFailure:
@@ -562,14 +435,13 @@ pipeline:
                       spec:
                         mode: orchestration
                         config: default
-                        connectorRef: aws_connector     # <-- ECR connector for image pull
+                        connectorRef: aws_connector
                         target:
                           type: container
                           name: <+pipeline.variables.ECR_REGISTRY>/guestflow-api
                           variant: <+pipeline.variables.IMAGE_TAG>
                         advanced:
                           fail_on_severity: critical
-
                   - step:
                       type: AquaTrivy
                       name: Trivy scan frontend image
@@ -577,7 +449,7 @@ pipeline:
                       spec:
                         mode: orchestration
                         config: default
-                        connectorRef: aws_connector     # <-- ECR connector for image pull
+                        connectorRef: aws_connector
                         target:
                           type: container
                           name: <+pipeline.variables.ECR_REGISTRY>/guestflow-web
@@ -585,81 +457,12 @@ pipeline:
                         advanced:
                           fail_on_severity: critical
 
-    # -------------------------------------------------------------------------
-    # STAGE 11 — Publish Artifacts (OpenAPI spec + build manifest)
-    # -------------------------------------------------------------------------
-    - stage:
-        name: Publish Artifacts
-        identifier: publish_artifacts
-        type: CI
-        failureStrategies:
-          - onFailure:
-              errors:
-                - AllErrors
-              action:
-                type: StageRollback
-        spec:
-          cloneCodebase: false
-          platform:
-            os: Linux
-            arch: Amd64
-          runtime:
-            type: Cloud
-            spec: {}
-          execution:
-            steps:
-              - step:
-                  type: Run
-                  name: Publish OpenAPI spec to S3
-                  identifier: publish_openapi
-                  spec:
-                    shell: Sh
-                    command: |
-                      aws s3 cp backend/docs/openapi.yaml \
-                        s3://guestflow-artifacts/openapi/<+pipeline.variables.IMAGE_TAG>/openapi.yaml
-                      aws s3 cp backend/docs/openapi.yaml \
-                        s3://guestflow-artifacts/openapi/latest/openapi.yaml
-                      aws s3 cp backend/docs/openapi.json \
-                        s3://guestflow-artifacts/openapi/latest/openapi.json
-                      echo "OpenAPI spec published to S3"
-                    envVariables:
-                      AWS_ACCESS_KEY_ID: <+secrets.getValue("aws_access_key_id")>
-                      AWS_SECRET_ACCESS_KEY: <+secrets.getValue("aws_secret_access_key")>
-                      AWS_DEFAULT_REGION: <+pipeline.variables.ECR_REGION>
-
-              - step:
-                  type: Run
-                  name: Build manifest summary
-                  identifier: build_manifest
-                  spec:
-                    shell: Sh
-                    command: |
-                      cat << EOF > /tmp/build-manifest.json
-                      {
-                        "pipeline": "<+pipeline.identifier>",
-                        "build": "<+pipeline.sequenceId>",
-                        "commit": "<+codebase.commitSha>",
-                        "branch": "<+codebase.branch>",
-                        "imageTag": "<+pipeline.variables.IMAGE_TAG>",
-                        "backendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-api:<+pipeline.variables.IMAGE_TAG>",
-                        "frontendImage": "<+pipeline.variables.ECR_REGISTRY>/guestflow-web:<+pipeline.variables.IMAGE_TAG>",
-                        "openApiSpec": "s3://guestflow-artifacts/openapi/<+pipeline.variables.IMAGE_TAG>/openapi.yaml",
-                        "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-                      }
-                      EOF
-                      cat /tmp/build-manifest.json
-
-    # -------------------------------------------------------------------------
-    # STAGE 12 — Publish Custom Check Results to Harness IDP Scorecard
-    # Finding counts come directly from STO step output variables via Harness
-    # expressions — no extra API calls needed.
-    #
-    # Expression pattern:
-    #   <+pipeline.stages.<stageId>.spec.execution.steps.<stepId>.output.outputVariables.CRITICAL>
-    #
-    # For Grype (2 parallel steps) and Trivy (2 parallel steps) we sum both
-    # targets inside the shell command using arithmetic expansion.
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # STAGE 4 — IDP Scorecard Checks
+    # Posts all 6 custom check results to Harness IDP in parallel.
+    # Finding counts come from STO step output variables via Harness expressions
+    # — no extra API calls needed.
+    # =========================================================================
     - stage:
         name: IDP Scorecard Checks
         identifier: idp_scorecard_checks
@@ -681,7 +484,7 @@ pipeline:
           execution:
             steps:
               - parallel:
-                  # ── Test Coverage ──────────────────────────────────────────
+
                   - step:
                       type: Run
                       name: IDP check - Test Coverage
@@ -689,7 +492,7 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          COVERAGE=<+pipeline.stages.test.spec.execution.steps.backend_tests.output.outputVariables.BACKEND_COVERAGE>
+                          COVERAGE=<+pipeline.stages.ci.spec.execution.steps.test.steps.backend_tests.output.outputVariables.BACKEND_COVERAGE>
                           STATUS=$([ "${COVERAGE:-0}" -ge 80 ] && echo PASS || echo FAIL)
                           curl -s -X POST \
                             "https://app.harness.io/gateway/v1/orgs/TPM/projects/Diego/idp/checks/results" \
@@ -708,7 +511,6 @@ pipeline:
                             }"
                           echo "IDP check backend_test_coverage: $STATUS (${COVERAGE:-0}%)"
 
-                  # ── SonarQube Quality Gate ─────────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - SonarQube Quality Gate
@@ -716,7 +518,7 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          GATE=<+pipeline.stages.sonarqube.spec.execution.steps.sonar_gate_export.output.outputVariables.SONAR_QUALITY_GATE>
+                          GATE=<+pipeline.stages.ci.spec.execution.steps.sonarqube.steps.sonar_scan.output.outputVariables.SONAR_QUALITY_GATE>
                           GATE=${GATE:-UNKNOWN}
                           STATUS=$([ "$GATE" = "OK" ] && echo PASS || echo FAIL)
                           curl -s -X POST \
@@ -736,7 +538,6 @@ pipeline:
                             }"
                           echo "IDP check sonar_quality_gate: $STATUS ($GATE)"
 
-                  # ── SAST — Semgrep output variables ────────────────────────
                   - step:
                       type: Run
                       name: IDP check - SAST No Critical Findings
@@ -744,8 +545,8 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          CRITICAL=<+pipeline.stages.sast_semgrep.spec.execution.steps.semgrep_scan.output.outputVariables.CRITICAL>
-                          HIGH=<+pipeline.stages.sast_semgrep.spec.execution.steps.semgrep_scan.output.outputVariables.HIGH>
+                          CRITICAL=<+pipeline.stages.security_scans.spec.execution.steps.sast.steps.semgrep_scan.output.outputVariables.CRITICAL>
+                          HIGH=<+pipeline.stages.security_scans.spec.execution.steps.sast.steps.semgrep_scan.output.outputVariables.HIGH>
                           CRITICAL=${CRITICAL:-0}
                           HIGH=${HIGH:-0}
                           STATUS=$([ "$CRITICAL" -eq 0 ] && echo PASS || echo FAIL)
@@ -766,7 +567,6 @@ pipeline:
                             }"
                           echo "IDP check sast_no_critical_findings: $STATUS (critical=$CRITICAL, high=$HIGH)"
 
-                  # ── SCA — Grype output variables (backend + frontend summed) ─
                   - step:
                       type: Run
                       name: IDP check - SCA No Critical Vulnerabilities
@@ -774,10 +574,10 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          BE_CRIT=<+pipeline.stages.sca_grype.spec.execution.steps.grype_backend.output.outputVariables.CRITICAL>
-                          FE_CRIT=<+pipeline.stages.sca_grype.spec.execution.steps.grype_frontend.output.outputVariables.CRITICAL>
-                          BE_HIGH=<+pipeline.stages.sca_grype.spec.execution.steps.grype_backend.output.outputVariables.HIGH>
-                          FE_HIGH=<+pipeline.stages.sca_grype.spec.execution.steps.grype_frontend.output.outputVariables.HIGH>
+                          BE_CRIT=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_backend.output.outputVariables.CRITICAL>
+                          FE_CRIT=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_frontend.output.outputVariables.CRITICAL>
+                          BE_HIGH=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_backend.output.outputVariables.HIGH>
+                          FE_HIGH=<+pipeline.stages.security_scans.spec.execution.steps.sca.steps.grype_frontend.output.outputVariables.HIGH>
                           CRITICAL=$(( ${BE_CRIT:-0} + ${FE_CRIT:-0} ))
                           HIGH=$(( ${BE_HIGH:-0} + ${FE_HIGH:-0} ))
                           STATUS=$([ "$CRITICAL" -eq 0 ] && echo PASS || echo FAIL)
@@ -791,14 +591,13 @@ pipeline:
                               \"result\": {
                                 \"status\": \"$STATUS\",
                                 \"value\": \"$CRITICAL\",
-                                \"details\": \"Grype SCA — Critical CVEs: $CRITICAL (backend: ${BE_CRIT:-0}, frontend: ${FE_CRIT:-0}), High: $HIGH\",
+                                \"details\": \"Grype SCA — Critical: $CRITICAL (backend: ${BE_CRIT:-0}, frontend: ${FE_CRIT:-0}), High: $HIGH\",
                                 \"pipelineId\": \"<+pipeline.identifier>\",
                                 \"buildId\": \"<+pipeline.sequenceId>\"
                               }
                             }"
                           echo "IDP check sca_no_critical_vulnerabilities: $STATUS (critical=$CRITICAL, high=$HIGH)"
 
-                  # ── Container Scan — Trivy output variables (backend + frontend summed) ─
                   - step:
                       type: Run
                       name: IDP check - Container Scan No Critical CVEs
@@ -806,10 +605,10 @@ pipeline:
                       spec:
                         shell: Sh
                         command: |
-                          BE_CRIT=<+pipeline.stages.container_scan_trivy.spec.execution.steps.trivy_backend.output.outputVariables.CRITICAL>
-                          FE_CRIT=<+pipeline.stages.container_scan_trivy.spec.execution.steps.trivy_frontend.output.outputVariables.CRITICAL>
-                          BE_HIGH=<+pipeline.stages.container_scan_trivy.spec.execution.steps.trivy_backend.output.outputVariables.HIGH>
-                          FE_HIGH=<+pipeline.stages.container_scan_trivy.spec.execution.steps.trivy_frontend.output.outputVariables.HIGH>
+                          BE_CRIT=<+pipeline.stages.container_scan.spec.execution.steps.trivy_backend.output.outputVariables.CRITICAL>
+                          FE_CRIT=<+pipeline.stages.container_scan.spec.execution.steps.trivy_frontend.output.outputVariables.CRITICAL>
+                          BE_HIGH=<+pipeline.stages.container_scan.spec.execution.steps.trivy_backend.output.outputVariables.HIGH>
+                          FE_HIGH=<+pipeline.stages.container_scan.spec.execution.steps.trivy_frontend.output.outputVariables.HIGH>
                           CRITICAL=$(( ${BE_CRIT:-0} + ${FE_CRIT:-0} ))
                           HIGH=$(( ${BE_HIGH:-0} + ${FE_HIGH:-0} ))
                           STATUS=$([ "$CRITICAL" -eq 0 ] && echo PASS || echo FAIL)
@@ -830,7 +629,6 @@ pipeline:
                             }"
                           echo "IDP check container_scan_no_critical_cve: $STATUS (critical=$CRITICAL, high=$HIGH)"
 
-                  # ── OpenAPI Spec ───────────────────────────────────────────
                   - step:
                       type: Run
                       name: IDP check - OpenAPI Spec Published
@@ -855,7 +653,6 @@ pipeline:
                             }"
                           echo "IDP check openapi_spec_published: PASS"
 
-  # ── Notification on failure ────────────────────────────────────────────────
   notificationRules:
     - name: Notify on failure
       identifier: notify_failure
