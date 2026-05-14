@@ -93,6 +93,7 @@ pipeline:
                             name: Install backend deps
                             identifier: install_backend
                             spec:
+                              image: node:20
                               shell: Sh
                               command: cd backend && npm ci
                               envVariables:
@@ -102,6 +103,7 @@ pipeline:
                             name: Install frontend deps
                             identifier: install_frontend
                             spec:
+                              image: node:20
                               shell: Sh
                               command: cd frontend && npm ci
 
@@ -116,6 +118,7 @@ pipeline:
                             name: TypeCheck backend
                             identifier: typecheck_backend
                             spec:
+                              image: node:20
                               shell: Sh
                               command: cd backend && npx tsc --noEmit
                         - step:
@@ -123,6 +126,7 @@ pipeline:
                             name: TypeCheck frontend
                             identifier: typecheck_frontend
                             spec:
+                              image: node:20
                               shell: Sh
                               command: cd frontend && npx tsc --noEmit
 
@@ -137,6 +141,7 @@ pipeline:
                             name: Backend tests and coverage
                             identifier: backend_tests
                             spec:
+                              image: node:20
                               shell: Sh
                               command: |
                                 cd backend
@@ -156,6 +161,7 @@ pipeline:
                             name: Frontend tests and coverage
                             identifier: frontend_tests
                             spec:
+                              image: node:20
                               shell: Sh
                               command: |
                                 cd frontend
@@ -170,6 +176,7 @@ pipeline:
                         name: Enforce coverage threshold
                         identifier: coverage_gate
                         spec:
+                          image: node:20
                           shell: Sh
                           command: |
                             COVERAGE=${BACKEND_COVERAGE:-0}
@@ -227,6 +234,7 @@ pipeline:
                         name: Generate and validate OpenAPI spec
                         identifier: gen_openapi
                         spec:
+                          image: node:20
                           shell: Sh
                           command: |
                             cd backend
