@@ -1,0 +1,35 @@
+# Harness IDP 2.0 — API Entity
+# Registra o contrato OpenAPI do GuestFlow API no catálogo
+# Ref: https://developer.harness.io/docs/internal-developer-portal/catalog/tutorials/add-api-docs/
+
+apiVersion: harness.io/v1
+kind: API
+type: openapi
+identifier: guestflow-rest-api
+name: GuestFlow REST API
+owner: group:account/digital-experience-team
+orgIdentifier: default
+projectIdentifier: guestflow
+
+metadata:
+  description: >
+    OpenAPI 3.0 contract for the GuestFlow backend API.
+    Covers health/readiness probes, dashboard KPIs, guest experiences,
+    reservations, and the check-in flow.
+  annotations:
+    backstage.io/source-location: url:https://github.com/your-org/guestflow/blob/main/docs/openapi.yaml
+  tags:
+    - rest
+    - openapi
+    - guest-experience
+    - public
+  links:
+    - title: OpenAPI Specification (raw)
+      url: https://raw.githubusercontent.com/your-org/guestflow/main/docs/openapi.yaml
+      icon: docs
+      type: specification
+
+spec:
+  lifecycle: production
+  definition:
+    $yaml: https://raw.githubusercontent.com/your-org/guestflow/main/docs/openapi.yaml

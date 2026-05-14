@@ -1,0 +1,92 @@
+# =============================================================================
+# GuestFlow — Testing Scorecard
+# Score: 88%  |  Level: Advanced
+#
+# Checks in this scorecard:
+#   - Static checks (catalog-field): validated at catalog registration time
+#   - CI-driven checks (ci_pipeline): updated on every pipeline run
+#     └── See catalog/idp-checks/ for full check definitions
+# =============================================================================
+
+scorecard:
+  name: Testing Quality
+  identifier: testing_quality
+  version: 2.0.0
+  description: >
+    Evaluates testing maturity across unit, API and frontend layers.
+    Coverage thresholds are enforced in CI via Vitest and the results
+    are published to Harness IDP after each pipeline run.
+  service: guestflow-api
+  owner: group:account/digital-experience-team
+  projectIdentifier: guestflow
+
+checks:
+
+  # ── Static checks (resolved at catalog registration time) ────────────────
+
+  - identifier: unit_tests_exist
+    name: Unit tests exist
+    description: Service has unit tests covering core business logic
+    type: catalog-field
+    weight: 10
+    status: passing
+    evidence: backend/tests/ (6 test files, 25 assertions)
+
+  - identifier: api_tests_exist
+    name: API integration tests exist
+    description: HTTP endpoints covered by Supertest integration tests
+    type: catalog-field
+    weight: 10
+    status: passing
+    evidence: backend/tests/checkins.test.ts, experiences.test.ts, etc.
+
+  - identifier: frontend_tests_exist
+    name: Frontend component tests exist
+    description: React components tested with Vitest + React Testing Library
+    type: catalog-field
+    weight: 10
+    status: passing
+    evidence: frontend/src/tests/ (App, MetricCard, StatusBadge)
+
+  - identifier: pipeline_blocks_on_test_failure
+    name: Pipeline blocks on test failure
+    description: CI pipeline fails fast when any test suite does not pass
+    type: catalog-field
+    weight: 5
+    status: passing
+    evidence: pipelines/harness-ci-pipeline.yaml (stage: test)
+
+  # ── CI-driven checks (updated by pipeline, see catalog/idp-checks/) ──────
+
+  - identifier: backend_test_coverage
+    name: "Backend Test Coverage ≥ 80%"
+    description: >
+      Vitest line coverage must meet or exceed 80%.
+      Result pushed by CI pipeline stage: idp_scorecard_checks.
+    type: ci_pipeline
+    weight: 40
+    thresholds:
+      pass: ">= 80%"
+      warn: ">= 70%"
+      fail: "< 70%"
+    checkDefinition: catalog/idp-checks/backend-test-coverage.yaml
+
+  - identifier: sonar_quality_gate
+    name: "SonarQube Quality Gate = OK"
+    description: >
+      SonarQube quality gate must return OK.
+      Enforces: coverage, no new critical bugs/vulns, low duplication.
+    type: ci_pipeline
+    weight: 25
+    thresholds:
+      pass: "OK"
+      fail: "WARN | ERROR"
+    checkDefinition: catalog/idp-checks/sonar-quality-gate.yaml
+
+score:
+  total: 88
+  breakdown:
+    static_checks: 35
+    ci_driven_checks: 65
+  level: Advanced
+  lastUpdated: ci-driven

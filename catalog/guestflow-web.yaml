@@ -1,0 +1,51 @@
+# Harness IDP 2.0 — Service Catalog Entity
+# Ref: https://developer.harness.io/docs/internal-developer-portal/catalog/catalog-yaml/
+
+apiVersion: harness.io/v1
+kind: Component
+type: website
+identifier: guestflow-web
+name: GuestFlow Web
+owner: group:account/digital-experience-team
+orgIdentifier: default
+projectIdentifier: guestflow
+
+metadata:
+  description: >
+    React frontend for the GuestFlow digital guest experience platform.
+    Provides a Command Center dashboard, Experiences catalog, guest Check-in
+    flow, and a Service Readiness view with live DevOps scorecards.
+    Built with React 18, Vite and TypeScript.
+  annotations:
+    backstage.io/source-location: url:https://github.com/your-org/guestflow/tree/main/frontend
+    github.com/project-slug: your-org/guestflow
+    harness.io/ci-pipelineId: guestflow_ci
+    harness.io/cd-pipelineId: guestflow_cd
+  tags:
+    - react
+    - typescript
+    - vite
+    - frontend
+    - guest-experience
+    - idp
+  links:
+    - title: Live App
+      url: http://localhost:3000
+      icon: dashboard
+      type: website
+    - title: Source Code
+      url: https://github.com/your-org/guestflow/tree/main/frontend
+      icon: github
+      type: source
+  labels:
+    tier: "1"
+    language: typescript
+    framework: react-vite
+    runtime: nginx
+
+spec:
+  lifecycle: production
+  system:
+    - system:account/digital_experience_platform
+  dependsOn:
+    - component:guestflow-api

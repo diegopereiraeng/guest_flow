@@ -1,0 +1,175 @@
+pipeline:
+  name: guestflow-cd
+  identifier: guestflow_cd
+  description: CD pipeline for GuestFlow — dev approval prod with rollback
+  projectIdentifier: guestflow
+  orgIdentifier: digital_experience
+
+  inputSets:
+    - name: image_tag
+      identifier: image_tag
+      variables:
+        - name: IMAGE_TAG
+          type: String
+          value: latest
+
+  stages:
+    - stage:
+        name: deploy_dev
+        identifier: deploy_dev
+        type: Deployment
+        spec:
+          serviceConfig:
+            serviceRef: guestflow_api
+            serviceDefinition:
+              type: Kubernetes
+              spec:
+                artifacts:
+                  primary:
+                    type: DockerRegistry
+                    spec:
+                      connectorRef: docker_hub_connector
+                      imagePath: guestflow/guestflow-api
+                      tag: <+pipeline.variables.IMAGE_TAG>
+          infrastructure:
+            environmentRef: dev
+            infrastructureDefinition:
+              type: KubernetesDirect
+              spec:
+                connectorRef: k8s_dev_cluster
+                namespace: guestflow-dev
+          execution:
+            steps:
+              - step:
+                  name: Rolling Deployment Dev
+                  type: K8sRollingDeploy
+                  spec:
+                    skipDryRun: false
+
+    - stage:
+        name: smoke_test_dev
+        identifier: smoke_test_dev
+        type: CI
+        spec:
+          steps:
+            - step:
+                name: Health Check Dev
+                type: Run
+                spec:
+                  command: |
+                    curl -f http://guestflow-api.dev.internal/health
+                    curl -f http://guestflow-api.dev.internal/ready
+            - step:
+                name: API Smoke Test Dev
+                type: Run
+                spec:
+                  command: |
+                    curl -f http://guestflow-api.dev.internal/api/dashboard
+                    curl -f http://guestflow-api.dev.internal/api/experiences
+
+    - stage:
+        name: approval_stage
+        identifier: approval_stage
+        type: Approval
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Approve Production Deployment
+                  type: HarnessApproval
+                  spec:
+                    approvalMessage: |
+                      GuestFlow build <+pipeline.variables.IMAGE_TAG> passed smoke tests in dev.
+                      Please review and approve deployment to production.
+                    includePipelineExecutionHistory: true
+                    approvers:
+                      minimumCount: 1
+                      disallowPipelineExecutor: false
+                      userGroups:
+                        - digital_experience_leads
+                    approverInputs:
+                      - name: release_notes
+                        defaultValue: ''
+
+    - stage:
+        name: deploy_prod
+        identifier: deploy_prod
+        type: Deployment
+        spec:
+          serviceConfig:
+            serviceRef: guestflow_api
+            serviceDefinition:
+              type: Kubernetes
+              spec:
+                artifacts:
+                  primary:
+                    type: DockerRegistry
+                    spec:
+                      connectorRef: docker_hub_connector
+                      imagePath: guestflow/guestflow-api
+                      tag: <+pipeline.variables.IMAGE_TAG>
+          infrastructure:
+            environmentRef: production
+            infrastructureDefinition:
+              type: KubernetesDirect
+              spec:
+                connectorRef: k8s_prod_cluster
+                namespace: guestflow-prod
+          execution:
+            steps:
+              - step:
+                  name: Rolling Deployment Prod
+                  type: K8sRollingDeploy
+                  spec:
+                    skipDryRun: false
+
+    - stage:
+        name: verify_prod
+        identifier: verify_prod
+        type: CI
+        spec:
+          steps:
+            - step:
+                name: Health Check Prod
+                type: Run
+                spec:
+                  command: |
+                    curl -f http://guestflow-api.prod.internal/health
+                    curl -f http://guestflow-api.prod.internal/ready
+            - step:
+                name: Version Check
+                type: Run
+                spec:
+                  command: |
+                    VERSION=$(curl -s http://guestflow-api.prod.internal/api/version | jq -r .version)
+                    echo "Deployed version: $VERSION"
+
+    - stage:
+        name: rollback_on_failure
+        identifier: rollback_on_failure
+        type: Deployment
+        when:
+          condition: <+stage.verify_prod.status> == "Failed"
+        spec:
+          serviceConfig:
+            serviceRef: guestflow_api
+          infrastructure:
+            environmentRef: production
+            infrastructureDefinition:
+              type: KubernetesDirect
+              spec:
+                connectorRef: k8s_prod_cluster
+                namespace: guestflow-prod
+          execution:
+            steps:
+              - step:
+                  name: Rollback to Previous Version
+                  type: K8sRollingRollback
+                  spec: {}
+              - step:
+                  name: Notify Team on Rollback
+                  type: Run
+                  spec:
+                    command: |
+                      echo "ROLLBACK triggered for guestflow-api in production"
+                      echo "Build: <+pipeline.variables.IMAGE_TAG>"

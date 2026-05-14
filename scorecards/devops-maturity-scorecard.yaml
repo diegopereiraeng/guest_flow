@@ -1,0 +1,68 @@
+scorecard:
+  name: DevOps Maturity
+  version: 1.0.0
+  description: Measures the overall engineering and delivery maturity of the service
+  service: guestflow-api
+  owner: digital-experience-team
+
+levels:
+  - level: 1
+    name: Foundation
+    description: Basic CI, tests and documentation in place
+  - level: 2
+    name: Defined
+    description: Automated pipelines, service catalog, health checks
+  - level: 3
+    name: Advanced
+    description: Quality gates, rollback strategy, full scorecard coverage
+  - level: 4
+    name: Elite
+    description: Progressive delivery, canary, full observability
+
+criteria:
+  - id: service_has_owner
+    name: Service has a defined owner
+    weight: 15
+    status: passing
+    evidence: catalog/guestflow-api.yaml
+
+  - id: service_has_documentation
+    name: Service has documentation
+    weight: 10
+    status: passing
+    evidence: docs/architecture.md, docs/runbook.md
+
+  - id: service_has_health_endpoint
+    name: Service exposes a health endpoint
+    weight: 15
+    status: passing
+    evidence: GET /health
+
+  - id: service_has_rollback_strategy
+    name: Service has a rollback strategy
+    weight: 15
+    status: passing
+    evidence: pipelines/harness-cd-pipeline.yaml (rollback_on_failure)
+
+  - id: service_has_deployment_pipeline
+    name: Service has a deployment pipeline
+    weight: 20
+    status: passing
+    evidence: pipelines/harness-ci-pipeline.yaml, pipelines/harness-cd-pipeline.yaml
+
+  - id: service_has_quality_gates
+    name: Service has quality gates in CI
+    weight: 15
+    status: passing
+    evidence: pipelines/harness-ci-pipeline.yaml
+
+  - id: service_has_production_environment
+    name: Service is deployed to a production environment
+    weight: 10
+    status: passing
+    evidence: catalog/guestflow-api.yaml (lifecycle: production)
+
+score:
+  total: 100
+  current_level: 3
+  level_name: Advanced

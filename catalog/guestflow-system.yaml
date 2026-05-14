@@ -1,0 +1,33 @@
+# Harness IDP 2.0 — System Entity
+# Agrupa todos os componentes do GuestFlow em um sistema lógico
+# Ref: https://developer.harness.io/docs/internal-developer-portal/catalog/data-model/system-entity/
+
+apiVersion: harness.io/v1
+kind: System
+identifier: digital_experience_platform
+name: Digital Experience Platform
+owner: group:account/digital-experience-team
+orgIdentifier: default
+projectIdentifier: guestflow
+
+metadata:
+  description: >
+    The Digital Experience Platform encompasses all services, frontends and APIs
+    that power the GuestFlow guest journey — from real-time dashboards and
+    experience discovery to reservation management and check-in flows.
+  tags:
+    - guest-experience
+    - platform
+    - idp-demo
+  links:
+    - title: Architecture Docs
+      url: https://github.com/your-org/guestflow/blob/main/docs/architecture.md
+      icon: docs
+      type: documentation
+    - title: Runbook
+      url: https://github.com/your-org/guestflow/blob/main/docs/runbook.md
+      icon: docs
+      type: runbook
+
+spec:
+  lifecycle: production

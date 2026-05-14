@@ -1,0 +1,295 @@
+openapi: 3.0.3
+info:
+  title: GuestFlow API
+  description: Backend API for the GuestFlow digital experience platform
+  version: 1.0.0
+  contact:
+    name: Digital Experience Team
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      tags: [Observability]
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /ready:
+    get:
+      summary: Readiness check
+      operationId: getReady
+      tags: [Observability]
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+
+  /api/version:
+    get:
+      summary: Application version info
+      operationId: getVersion
+      tags: [Observability]
+      responses:
+        '200':
+          description: Version information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionInfo'
+
+  /api/dashboard:
+    get:
+      summary: Dashboard KPI metrics
+      operationId: getDashboard
+      tags: [Dashboard]
+      responses:
+        '200':
+          description: Dashboard metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMetrics'
+
+  /api/experiences:
+    get:
+      summary: List all guest experiences
+      operationId: getExperiences
+      tags: [Experiences]
+      responses:
+        '200':
+          description: List of experiences
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Experience'
+
+  /api/reservations:
+    get:
+      summary: List all reservations
+      operationId: getReservations
+      tags: [Reservations]
+      responses:
+        '200':
+          description: List of reservations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Reservation'
+
+  /api/checkins:
+    get:
+      summary: List all check-ins
+      operationId: getCheckins
+      tags: [Check-ins]
+      responses:
+        '200':
+          description: List of check-ins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CheckIn'
+    post:
+      summary: Create a guest check-in
+      operationId: createCheckin
+      tags: [Check-ins]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckInRequest'
+      responses:
+        '201':
+          description: Check-in created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckIn'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Experience not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          example: UP
+        service:
+          type: string
+          example: guestflow-api
+        version:
+          type: string
+          example: 1.0.0
+
+    ReadinessStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          example: READY
+        dependencies:
+          type: object
+          properties:
+            inMemoryStore:
+              type: string
+              example: UP
+            recommendationEngine:
+              type: string
+              example: MOCKED
+
+    VersionInfo:
+      type: object
+      properties:
+        app:
+          type: string
+          example: guestflow-api
+        version:
+          type: string
+          example: 1.0.0
+        commit:
+          type: string
+          example: local-dev
+        environment:
+          type: string
+          example: local
+
+    DashboardMetrics:
+      type: object
+      properties:
+        guestExperienceHealth:
+          type: number
+        liveGuestsToday:
+          type: number
+        activeReservations:
+          type: number
+        checkinsCompleted:
+          type: number
+        averageWaitTimeMinutes:
+          type: number
+        topExperience:
+          type: string
+        currentRelease:
+          type: string
+        releaseConfidence:
+          type: number
+        securityReadiness:
+          type: number
+        testReliability:
+          type: number
+        devopsMaturity:
+          type: string
+
+    Experience:
+      type: object
+      properties:
+        id:
+          type: string
+          example: exp-001
+        name:
+          type: string
+          example: Galaxy Adventure
+        type:
+          type: string
+          example: Attraction
+        status:
+          type: string
+          enum: [AVAILABLE, DELAYED, FULL]
+        waitTimeMinutes:
+          type: number
+        capacity:
+          type: number
+        satisfactionScore:
+          type: number
+
+    Reservation:
+      type: object
+      properties:
+        id:
+          type: string
+        guestName:
+          type: string
+        experienceId:
+          type: string
+        experienceName:
+          type: string
+        reservationCode:
+          type: string
+          example: GF-2048
+        status:
+          type: string
+          enum: [CONFIRMED, PENDING, CANCELLED]
+        scheduledTime:
+          type: string
+          example: '14:30'
+
+    CheckInRequest:
+      type: object
+      required: [guestName, experienceId, reservationCode]
+      properties:
+        guestName:
+          type: string
+          example: Ana Silva
+        experienceId:
+          type: string
+          example: exp-001
+        reservationCode:
+          type: string
+          example: GF-2048
+
+    CheckIn:
+      type: object
+      properties:
+        checkinId:
+          type: string
+          example: chk-1700000000000-abc12
+        guestName:
+          type: string
+        experienceId:
+          type: string
+        experienceName:
+          type: string
+        reservationCode:
+          type: string
+        status:
+          type: string
+          example: CONFIRMED
+        timestamp:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string

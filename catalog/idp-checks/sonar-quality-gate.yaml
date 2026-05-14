@@ -1,0 +1,57 @@
+# =============================================================================
+# Harness IDP — Custom Scorecard Check
+# Check: SonarQube Quality Gate = OK
+#
+# How it works:
+#   The CI pipeline runs sonar-scanner with -Dsonar.qualitygate.wait=true,
+#   queries the SonarQube API for the gate result, and POSTs it here.
+#   A gate status of "OK" means PASS; anything else (WARN, ERROR) is FAIL.
+#
+# Ref: https://developer.harness.io/docs/internal-developer-portal/scorecards/custom-checks
+# =============================================================================
+
+apiVersion: harness.io/v1
+kind: Check
+identifier: sonar_quality_gate
+name: "SonarQube Quality Gate"
+description: >
+  Validates that the SonarQube quality gate for guestflow-api returns
+  status OK on every CI run. The gate enforces: coverage >= 80%,
+  no new critical bugs, no new critical vulnerabilities,
+  and code duplication < 3%.
+
+owner: group:account/digital-experience-team
+projectIdentifier: guestflow
+orgIdentifier: default
+
+metadata:
+  tags:
+    - quality
+    - sonar
+    - ci
+  links:
+    - title: SonarQube Dashboard
+      url: https://sonarqube.your-org.internal/dashboard?id=guestflow
+      type: dashboard
+
+spec:
+  dataSource: ci_pipeline
+  pipelineIdentifier: guestflow_ci
+
+  rule:
+    type: string
+    operator: equals
+    value: "OK"
+    field: value          # "OK" | "WARN" | "ERROR"
+
+  scorecard:
+    category: Quality
+    weight: 30
+
+  thresholds:
+    pass:
+      operator: equals
+      value: "OK"
+    fail:
+      operator: not_equals
+      value: "OK"
