@@ -3,7 +3,7 @@
   "info": {
     "title": "GuestFlow API",
     "description": "Backend REST API for the GuestFlow digital guest experience platform. This spec is auto-generated from JSDoc annotations by the CI pipeline.",
-    "version": "33",
+    "version": "40",
     "contact": {
       "name": "Digital Experience Team",
       "url": "https://github.com/your-org/guestflow"
