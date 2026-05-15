@@ -1,65 +1,34 @@
-# Harness IDP 2.0 — Service Catalog Entity
-# Ref: https://developer.harness.io/docs/internal-developer-portal/catalog/catalog-yaml/
-
-apiVersion: harness.io/v1
+apiVersion: backstage.io/v1alpha1
 kind: Component
-type: service
-identifier: guestflow-api
-name: GuestFlow API
-owner: group:account/digital-experience-team
-orgIdentifier: TPM
-projectIdentifier: Diego
-
 metadata:
+  name: guestflow-api
   description: >
     Backend REST API for the GuestFlow digital guest experience platform.
     Exposes endpoints for dashboard metrics, experiences, reservations and
     check-ins. Built with Node.js, Express and TypeScript.
   annotations:
-    backstage.io/source-location: url:https://github.com/your-org/guestflow/tree/main/backend
-    github.com/project-slug: your-org/guestflow
-    # Harness CI pipeline reference
+    backstage.io/source-location: url:https://github.com/diegopereiraeng/guest_flow/tree/main/backend
+    github.com/project-slug: diegopereiraeng/guest_flow
     harness.io/ci-pipelineId: guestflow_ci
     harness.io/cd-pipelineId: guestflow_cd
-    # Observability
-    harness.io/health-check: http://localhost:8080/health
-    harness.io/readiness-check: http://localhost:8080/ready
+    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/all/orgs/TPM/projects/Diego
   tags:
     - nodejs
     - typescript
     - express
     - rest-api
     - guest-experience
-    - idp
-    - ci
-    - cd
-    - security
-    - scorecards
   links:
+    - title: OpenAPI Contract
+      url: https://github.com/diegopereiraeng/guest_flow/blob/main/docs/openapi.yaml
+      icon: docs
+      type: documentation
     - title: Health Check
       url: http://localhost:8080/health
       icon: health
       type: runbook
-    - title: OpenAPI Contract
-      url: http://localhost:8080/api/version
-      icon: docs
-      type: documentation
-    - title: Runbook
-      url: https://github.com/your-org/guestflow/blob/main/docs/runbook.md
-      icon: docs
-      type: runbook
-    - title: Architecture Diagram
-      url: https://github.com/your-org/guestflow/blob/main/docs/architecture.md
-      icon: docs
-      type: documentation
-  labels:
-    tier: "1"
-    language: typescript
-    framework: express
-    runtime: nodejs-20
-
 spec:
+  type: service
   lifecycle: production
-  system:
-    - system:account/digital_experience_platform
-  dependsOn: []
+  owner: group:default/digital-experience-team
+  system: digital-experience-platform
