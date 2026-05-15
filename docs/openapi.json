@@ -1,0 +1,524 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "GuestFlow API",
+    "description": "Backend REST API for the GuestFlow digital guest experience platform. This spec is auto-generated from JSDoc annotations by the CI pipeline.",
+    "version": "29",
+    "contact": {
+      "name": "Digital Experience Team",
+      "url": "https://github.com/your-org/guestflow"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    },
+    {
+      "url": "https://api.guestflow.internal",
+      "description": "Production"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Observability",
+      "description": "Health, readiness and version probes"
+    },
+    {
+      "name": "Dashboard",
+      "description": "Operational KPI metrics"
+    },
+    {
+      "name": "Experiences",
+      "description": "Guest-facing attraction and show data"
+    },
+    {
+      "name": "Reservations",
+      "description": "Guest reservation management"
+    },
+    {
+      "name": "Check-ins",
+      "description": "Guest check-in flow"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "DashboardMetrics": {
+        "type": "object",
+        "properties": {
+          "guestExperienceHealth": {
+            "type": "number",
+            "example": 96
+          },
+          "liveGuestsToday": {
+            "type": "number",
+            "example": 1248
+          },
+          "activeReservations": {
+            "type": "number",
+            "example": 342
+          },
+          "checkinsCompleted": {
+            "type": "number",
+            "example": 289
+          },
+          "averageWaitTimeMinutes": {
+            "type": "number",
+            "example": 24
+          },
+          "topExperience": {
+            "type": "string",
+            "example": "Galaxy Adventure"
+          },
+          "currentRelease": {
+            "type": "string",
+            "example": "v1.3.0"
+          },
+          "releaseConfidence": {
+            "type": "number",
+            "example": 92
+          },
+          "securityReadiness": {
+            "type": "number",
+            "example": 95
+          },
+          "testReliability": {
+            "type": "number",
+            "example": 88
+          },
+          "devopsMaturity": {
+            "type": "string",
+            "example": "Level 3"
+          }
+        }
+      },
+      "Experience": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "status",
+          "waitTimeMinutes",
+          "capacity",
+          "satisfactionScore"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "exp-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Galaxy Adventure"
+          },
+          "type": {
+            "type": "string",
+            "example": "Attraction"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "DELAYED",
+              "FULL"
+            ]
+          },
+          "waitTimeMinutes": {
+            "type": "number",
+            "example": 25
+          },
+          "capacity": {
+            "type": "number",
+            "example": 120
+          },
+          "satisfactionScore": {
+            "type": "number",
+            "example": 4.8
+          }
+        }
+      },
+      "Reservation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "res-001"
+          },
+          "guestName": {
+            "type": "string",
+            "example": "Ana Silva"
+          },
+          "experienceId": {
+            "type": "string",
+            "example": "exp-001"
+          },
+          "experienceName": {
+            "type": "string",
+            "example": "Galaxy Adventure"
+          },
+          "reservationCode": {
+            "type": "string",
+            "example": "GF-2048"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONFIRMED",
+              "PENDING",
+              "CANCELLED"
+            ]
+          },
+          "scheduledTime": {
+            "type": "string",
+            "example": "14:30"
+          }
+        }
+      },
+      "CheckInRequest": {
+        "type": "object",
+        "required": [
+          "guestName",
+          "experienceId",
+          "reservationCode"
+        ],
+        "properties": {
+          "guestName": {
+            "type": "string",
+            "example": "Ana Silva"
+          },
+          "experienceId": {
+            "type": "string",
+            "example": "exp-001"
+          },
+          "reservationCode": {
+            "type": "string",
+            "example": "GF-2048"
+          }
+        }
+      },
+      "CheckIn": {
+        "type": "object",
+        "properties": {
+          "checkinId": {
+            "type": "string",
+            "example": "chk-1700000000000-abc12"
+          },
+          "guestName": {
+            "type": "string",
+            "example": "Ana Silva"
+          },
+          "experienceId": {
+            "type": "string",
+            "example": "exp-001"
+          },
+          "experienceName": {
+            "type": "string",
+            "example": "Galaxy Adventure"
+          },
+          "reservationCode": {
+            "type": "string",
+            "example": "GF-2048"
+          },
+          "status": {
+            "type": "string",
+            "example": "CONFIRMED"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "Guest name is required"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/checkins": {
+      "post": {
+        "summary": "Create a guest check-in",
+        "description": "Validates and records a guest check-in against an existing experience. Persisted in-memory for the session lifetime.",
+        "tags": [
+          "Check-ins"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckInRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Check-in confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckIn"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing required field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "missingGuestName": {
+                    "value": {
+                      "error": "Guest name is required"
+                    }
+                  },
+                  "missingExperienceId": {
+                    "value": {
+                      "error": "Experience id is required"
+                    }
+                  },
+                  "missingReservationCode": {
+                    "value": {
+                      "error": "Reservation code is required"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Experience not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "value": {
+                    "error": "Experience not found"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List all check-ins",
+        "description": "Returns every check-in recorded during the current server session.",
+        "tags": [
+          "Check-ins"
+        ],
+        "responses": {
+          "200": {
+            "description": "List of check-ins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CheckIn"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard": {
+      "get": {
+        "summary": "Dashboard KPI metrics",
+        "description": "Returns real-time guest experience health indicators, release confidence and DevOps maturity metrics.",
+        "tags": [
+          "Dashboard"
+        ],
+        "responses": {
+          "200": {
+            "description": "Dashboard metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardMetrics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/experiences": {
+      "get": {
+        "summary": "List all guest experiences",
+        "description": "Returns the full list of available guest-facing experiences with real-time status, wait time and satisfaction data.",
+        "tags": [
+          "Experiences"
+        ],
+        "responses": {
+          "200": {
+            "description": "List of experiences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Experience"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Returns the live status of the GuestFlow API service.",
+        "tags": [
+          "Observability"
+        ],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "UP"
+                    },
+                    "service": {
+                      "type": "string",
+                      "example": "guestflow-api"
+                    },
+                    "version": {
+                      "type": "string",
+                      "example": "1.0.0"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "summary": "Readiness check",
+        "description": "Returns the readiness state of all internal dependencies.",
+        "tags": [
+          "Observability"
+        ],
+        "responses": {
+          "200": {
+            "description": "Service is ready to receive traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "READY"
+                    },
+                    "dependencies": {
+                      "type": "object",
+                      "properties": {
+                        "inMemoryStore": {
+                          "type": "string",
+                          "example": "UP"
+                        },
+                        "recommendationEngine": {
+                          "type": "string",
+                          "example": "MOCKED"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reservations": {
+      "get": {
+        "summary": "List all reservations",
+        "description": "Returns the list of guest reservations with their status and scheduled times.",
+        "tags": [
+          "Reservations"
+        ],
+        "responses": {
+          "200": {
+            "description": "List of reservations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Reservation"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/version": {
+      "get": {
+        "summary": "Application version info",
+        "description": "Returns the current build version, git commit SHA and environment.",
+        "tags": [
+          "Observability"
+        ],
+        "responses": {
+          "200": {
+            "description": "Version information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "app": {
+                      "type": "string",
+                      "example": "guestflow-api"
+                    },
+                    "version": {
+                      "type": "string",
+                      "example": "1.0.0"
+                    },
+                    "commit": {
+                      "type": "string",
+                      "example": "a1b2c3d"
+                    },
+                    "environment": {
+                      "type": "string",
+                      "example": "production"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
