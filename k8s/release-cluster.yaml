@@ -1,0 +1,87 @@
+template:
+  name: Release Cluster
+  type: Pipeline
+  projectIdentifier: brett_sandbox
+  orgIdentifier: sandbox
+  spec:
+    stages:
+      - stage:
+          name: Lock Cluster
+          identifier: Lock_Cluster
+          description: ""
+          type: Custom
+          spec:
+            execution:
+              steps:
+                - step:
+                    type: Queue
+                    name: Lock Cluster
+                    identifier: Lock_Cluster
+                    spec:
+                      key: production-<+pipeline.variables.cluster>
+                      scope: Pipeline
+                    timeout: 3d
+          tags: {}
+      - stage:
+          name: Deploy Service
+          identifier: Deploy_Green
+          description: ""
+          type: Deployment
+          spec:
+            deploymentType: Kubernetes
+            services:
+              values: <+input>
+              metadata:
+                parallel: true
+            environment:
+              environmentRef: Production
+              deployToAll: false
+              infrastructureDefinitions: <+input>
+            execution:
+              steps:
+                - step:
+                    name: Rollout Deployment
+                    identifier: rolloutDeployment
+                    type: K8sRollingDeploy
+                    timeout: 10m
+                    spec:
+                      skipDryRun: false
+                      pruningEnabled: false
+                    when:
+                      stageStatus: Success
+                      condition: "false"
+                - step:
+                    type: Http
+                    name: Health Check
+                    identifier: Health_Check
+                    spec:
+                      url: https://harness.io
+                      method: GET
+                      headers: []
+                      inputVariables: []
+                      outputVariables: []
+                    timeout: 10s
+              rollbackSteps:
+                - step:
+                    name: Rollback Rollout Deployment
+                    identifier: rollbackRolloutDeployment
+                    type: K8sRollingRollback
+                    timeout: 10m
+                    spec:
+                      pruningEnabled: false
+          tags: {}
+          failureStrategies:
+            - onFailure:
+                errors:
+                  - AllErrors
+                action:
+                  type: StageRollback
+    variables:
+      - name: cluster
+        type: String
+        description: ""
+        required: true
+        value: <+input>.allowedValues(green,blue)
+  identifier: Cluster_Release
+  versionLabel: v1
+  tags: {}

@@ -13,7 +13,7 @@ scorecard:
     runbook, health/readiness endpoints, and ownership.
   service: guestflow-api
   owner: group:account/digital-experience-team
-  projectIdentifier: guestflow
+  projectIdentifier: Diego
 
 checks:
 

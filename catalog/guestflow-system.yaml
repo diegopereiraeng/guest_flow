@@ -7,8 +7,8 @@ kind: System
 identifier: digital_experience_platform
 name: Digital Experience Platform
 owner: group:account/digital-experience-team
-orgIdentifier: default
-projectIdentifier: guestflow
+orgIdentifier: TPM
+projectIdentifier: Diego
 
 metadata:
   description: >

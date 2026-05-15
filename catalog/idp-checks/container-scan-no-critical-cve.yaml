@@ -21,8 +21,8 @@ description: >
   against the exact image tags built in the same pipeline execution.
 
 owner: group:account/digital-experience-team
-projectIdentifier: guestflow
-orgIdentifier: default
+projectIdentifier: Diego
+orgIdentifier: TPM
 
 metadata:
   tags:

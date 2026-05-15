@@ -20,7 +20,7 @@ scorecard:
     each CI execution. Critical findings block ECR push.
   service: guestflow-api
   owner: group:account/digital-experience-team
-  projectIdentifier: guestflow
+  projectIdentifier: Diego
 
 checks:
 

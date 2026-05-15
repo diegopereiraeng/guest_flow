@@ -18,7 +18,7 @@ scorecard:
     are published to Harness IDP after each pipeline run.
   service: guestflow-api
   owner: group:account/digital-experience-team
-  projectIdentifier: guestflow
+  projectIdentifier: Diego
 
 checks:
 

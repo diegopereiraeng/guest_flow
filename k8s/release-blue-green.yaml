@@ -1,0 +1,73 @@
+pipeline:
+  name: Blue-Green Progressive Release
+  identifier: BlueGreen_Progressive_Release_2
+  projectIdentifier: brett_sandbox
+  orgIdentifier: sandbox
+  tags: {}
+  stages:
+    - stage:
+        name: Release Green
+        identifier: Release_Green
+        description: ""
+        type: Pipeline
+        spec:
+          org: sandbox
+          pipeline: Release_Green
+          project: brett_sandbox
+          inputs:
+            identifier: Release_Green
+            template:
+              templateInputs:
+                stages:
+                  - stage:
+                      identifier: Deploy_Green
+                      type: Deployment
+                      spec:
+                        services:
+                          values: <+input>
+    - stage:
+        name: Approve Blue
+        identifier: Approve_Blue
+        description: ""
+        type: Approval
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Approve Blue
+                  identifier: Approve_Blue
+                  type: HarnessApproval
+                  timeout: 1d
+                  spec:
+                    approvalMessage: |-
+                      Please review the following information
+                      and approve the pipeline progression
+                    includePipelineExecutionHistory: true
+                    approvers:
+                      minimumCount: 1
+                      disallowPipelineExecutor: false
+                      userGroups:
+                        - account._account_all_users
+                    isAutoRejectEnabled: false
+                    approverInputs: []
+        tags: {}
+    - stage:
+        name: Release Blue
+        identifier: Release_Blue
+        description: ""
+        type: Pipeline
+        spec:
+          org: sandbox
+          pipeline: Release_Blue
+          project: brett_sandbox
+          inputs:
+            identifier: Release_Blue
+            template:
+              templateInputs:
+                stages:
+                  - stage:
+                      identifier: Deploy_Green
+                      type: Deployment
+                      spec:
+                        services:
+                          values: <+input>

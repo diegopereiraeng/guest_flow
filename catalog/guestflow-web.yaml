@@ -7,8 +7,8 @@ type: website
 identifier: guestflow-web
 name: GuestFlow Web
 owner: group:account/digital-experience-team
-orgIdentifier: default
-projectIdentifier: guestflow
+orgIdentifier: TPM
+projectIdentifier: Diego
 
 metadata:
   description: >

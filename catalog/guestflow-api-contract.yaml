@@ -8,8 +8,8 @@ type: openapi
 identifier: guestflow-rest-api
 name: GuestFlow REST API
 owner: group:account/digital-experience-team
-orgIdentifier: default
-projectIdentifier: guestflow
+orgIdentifier: TPM
+projectIdentifier: Diego
 
 metadata:
   description: >

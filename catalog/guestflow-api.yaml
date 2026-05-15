@@ -7,8 +7,8 @@ type: service
 identifier: guestflow-api
 name: GuestFlow API
 owner: group:account/digital-experience-team
-orgIdentifier: default
-projectIdentifier: guestflow
+orgIdentifier: TPM
+projectIdentifier: Diego
 
 metadata:
   description: >

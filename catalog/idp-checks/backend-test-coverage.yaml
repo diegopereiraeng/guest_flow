@@ -20,8 +20,8 @@ description: >
   extracted from the vitest --coverage lcov report on every pipeline run.
 
 owner: group:account/digital-experience-team
-projectIdentifier: guestflow
-orgIdentifier: default
+projectIdentifier: Diego
+orgIdentifier: TPM
 
 metadata:
   tags:

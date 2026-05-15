@@ -2,7 +2,7 @@ pipeline:
   name: guestflow-cd
   identifier: guestflow_cd
   description: CD pipeline for GuestFlow — dev approval prod with rollback
-  projectIdentifier: guestflow
+  projectIdentifier: Diego
   orgIdentifier: digital_experience
 
   inputSets:

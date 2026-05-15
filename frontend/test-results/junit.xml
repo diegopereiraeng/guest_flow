@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="8" failures="0" errors="0" time="1.332">
+    <testsuite name="src/tests/App.test.tsx" timestamp="2026-05-14T20:48:05.815Z" hostname="Diego-Pereira" tests="3" failures="0" errors="0" skipped="0" time="0.086">
+        <testcase classname="src/tests/App.test.tsx" name="App &gt; deve renderizar GuestFlow" time="0.02">
+            <system-err>
+Warning: An update to CommandCenter inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CommandCenter (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/CommandCenter.tsx:10:55)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+Warning: An update to CommandCenter inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CommandCenter (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/CommandCenter.tsx:10:55)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+
+            </system-err>
+        </testcase>
+        <testcase classname="src/tests/App.test.tsx" name="App &gt; deve mostrar navegação com Command Center" time="0.003">
+            <system-err>
+Warning: An update to CommandCenter inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CommandCenter (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/CommandCenter.tsx:10:55)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+Warning: An update to CommandCenter inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CommandCenter (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/CommandCenter.tsx:10:55)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+
+            </system-err>
+        </testcase>
+        <testcase classname="src/tests/App.test.tsx" name="App &gt; deve permitir trocar para Experiences" time="0.062">
+            <system-err>
+Warning: An update to CommandCenter inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CommandCenter (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/CommandCenter.tsx:10:55)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+Warning: An update to CommandCenter inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at CommandCenter (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/CommandCenter.tsx:10:55)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+
+Warning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+Warning: An update to Experiences inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Experiences (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/Experiences.tsx:10:63)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+Warning: An update to Experiences inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() =&gt; {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you&apos;re testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at Experiences (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/pages/Experiences.tsx:10:63)
+    at main
+    at div
+    at App (/Users/diegopereira/Documents/Dev/Git/guest-flow/frontend/src/App.tsx:18:49)
+
+            </system-err>
+        </testcase>
+    </testsuite>
+    <testsuite name="src/tests/MetricCard.test.tsx" timestamp="2026-05-14T20:48:05.816Z" hostname="Diego-Pereira" tests="2" failures="0" errors="0" skipped="0" time="0.02">
+        <testcase classname="src/tests/MetricCard.test.tsx" name="MetricCard &gt; deve renderizar título e valor" time="0.017">
+        </testcase>
+        <testcase classname="src/tests/MetricCard.test.tsx" name="MetricCard &gt; deve renderizar subtítulo quando fornecido" time="0.002">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/tests/StatusBadge.test.tsx" timestamp="2026-05-14T20:48:05.816Z" hostname="Diego-Pereira" tests="3" failures="0" errors="0" skipped="0" time="0.019">
+        <testcase classname="src/tests/StatusBadge.test.tsx" name="StatusBadge &gt; deve renderizar status AVAILABLE" time="0.017">
+        </testcase>
+        <testcase classname="src/tests/StatusBadge.test.tsx" name="StatusBadge &gt; deve renderizar status DELAYED" time="0.001">
+        </testcase>
+        <testcase classname="src/tests/StatusBadge.test.tsx" name="StatusBadge &gt; deve renderizar status FULL" time="0.001">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -22,8 +22,8 @@ description: >
   spec always reflects the actual implementation.
 
 owner: group:account/digital-experience-team
-projectIdentifier: guestflow
-orgIdentifier: default
+projectIdentifier: Diego
+orgIdentifier: TPM
 
 metadata:
   tags:

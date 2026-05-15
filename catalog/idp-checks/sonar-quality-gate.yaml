@@ -21,8 +21,8 @@ description: >
   and code duplication < 3%.
 
 owner: group:account/digital-experience-team
-projectIdentifier: guestflow
-orgIdentifier: default
+projectIdentifier: Diego
+orgIdentifier: TPM
 
 metadata:
   tags:
