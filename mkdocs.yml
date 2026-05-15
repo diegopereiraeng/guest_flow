@@ -1,0 +1,12 @@
+site_name: GuestFlow API
+site_description: Backend REST API for the GuestFlow digital guest experience platform
+repo_url: https://github.com/diegopereiraeng/guest_flow
+repo_name: diegopereiraeng/guest_flow
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Runbook: runbook.md
+
+theme:
+  name: techdocs-core
