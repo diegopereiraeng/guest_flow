@@ -1,9 +1,11 @@
 apiVersion: harness.io/v1
 kind: Component
-name: guestflow_api
+name: GuestFlow API
 identifier: guestflow_api
 type: service
 owner: group:account/digital_experience_team
+orgIdentifier: TPM
+projectIdentifier: Diego
 spec:
   lifecycle: production
   sourceCode:
@@ -22,11 +24,8 @@ metadata:
     Exposes endpoints for dashboard metrics, experiences, reservations and
     check-ins. Built with Node.js, Express and TypeScript.
   annotations:
-    backstage.io/source-location: url:https://github.com/diegopereiraeng/guest_flow/tree/main/backend
     backstage.io/techdocs-ref: url:https://github.com/diegopereiraeng/guest_flow/tree/main
     github.com/project-slug: diegopereiraeng/guest_flow
-    harness.io/ci-pipelineIds: guestflow_api_ci
-    harness.io/cd-pipelineIds: guestflow_cd
     harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
     harness.io/pipelines: |
       CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/
