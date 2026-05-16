@@ -1,51 +1,30 @@
-# Harness IDP 2.0 — Service Catalog Entity
-# Ref: https://developer.harness.io/docs/internal-developer-portal/catalog/catalog-yaml/
-
-apiVersion: harness.io/v1
+apiVersion: backstage.io/v1alpha1
 kind: Component
-type: website
-identifier: guestflow-web
-name: GuestFlow Web
-owner: group:account/digital-experience-team
-orgIdentifier: TPM
-projectIdentifier: Diego
-
 metadata:
+  name: guestflow-web
   description: >
-    React frontend for the GuestFlow digital guest experience platform.
-    Provides a Command Center dashboard, Experiences catalog, guest Check-in
-    flow, and a Service Readiness view with live DevOps scorecards.
-    Built with React 18, Vite and TypeScript.
+    Frontend React SPA for the GuestFlow digital guest experience platform.
+    Serves the guest-facing UI for dashboard, experiences, reservations and
+    check-ins. Built with React, TypeScript and Vite.
   annotations:
-    backstage.io/source-location: url:https://github.com/your-org/guestflow/tree/main/frontend
-    github.com/project-slug: your-org/guestflow
-    harness.io/ci-pipelineId: guestflow_ci
-    harness.io/cd-pipelineId: guestflow_cd
+    backstage.io/source-location: url:https://github.com/diegopereiraeng/guest_flow/tree/main/frontend
+    backstage.io/techdocs-ref: dir:.
+    github.com/project-slug: diegopereiraeng/guest_flow
+    harness.io/ci-pipelineId: guestflow_web_ci
+    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/all/orgs/TPM/projects/Diego
   tags:
     - react
     - typescript
     - vite
     - frontend
     - guest-experience
-    - idp
   links:
-    - title: Live App
+    - title: Health Check
       url: http://localhost:3000
-      icon: dashboard
-      type: website
-    - title: Source Code
-      url: https://github.com/your-org/guestflow/tree/main/frontend
-      icon: github
-      type: source
-  labels:
-    tier: "1"
-    language: typescript
-    framework: react-vite
-    runtime: nginx
-
+      icon: health
+      type: runbook
 spec:
+  type: service
   lifecycle: production
-  system:
-    - system:account/digital_experience_platform
-  dependsOn:
-    - component:guestflow-api
+  owner: group:default/digital-experience-team
+  system: digital-experience-platform
