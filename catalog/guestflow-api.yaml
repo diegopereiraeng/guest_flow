@@ -8,7 +8,7 @@ metadata:
     check-ins. Built with Node.js, Express and TypeScript.
   annotations:
     backstage.io/source-location: url:https://github.com/diegopereiraeng/guest_flow/tree/main/backend
-    backstage.io/techdocs-ref: dir:.
+    backstage.io/techdocs-ref: url:https://github.com/diegopereiraeng/guest_flow/tree/main
     github.com/project-slug: diegopereiraeng/guest_flow
     harness.io/ci-pipelineIds: guestflow_api_ci
     harness.io/sto-test-target: "guestflow-api"
