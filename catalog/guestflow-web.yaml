@@ -52,3 +52,11 @@ spec:
   lifecycle: production
   owner: group:default/digital-experience-team
   system: digital-experience-platform
+  sourceCode:
+    provider: Github
+    repoName: guest_flow
+    connectorRef: account.DiegoProd
+    branch: main
+    monoRepo: true
+    monoRepoSubDirectoryPath: frontend
+    url: https://github.com/diegopereiraeng/guest_flow/tree/main/frontend
