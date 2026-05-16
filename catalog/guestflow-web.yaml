@@ -1,11 +1,9 @@
 apiVersion: harness.io/v1
 kind: Component
-name: GuestFlow Web
+name: guestflow_web
 identifier: guestflow_web
 type: service
-owner: group:account/digital_experience_team
-orgIdentifier: TPM
-projectIdentifier: Diego
+owner: group:digital_experience_team
 spec:
   lifecycle: production
   sourceCode:
