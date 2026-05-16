@@ -1,8 +1,21 @@
-apiVersion: backstage.io/v1alpha1
+apiVersion: harness.io/v1
 kind: Component
+name: guestflow_web
+identifier: guestflow_web
+type: service
+owner: group:account/digital_experience_team
+spec:
+  lifecycle: production
+  sourceCode:
+    provider: Github
+    repoName: guest_flow
+    connectorRef: account.DiegoProd
+    branch: main
+    monoRepo: true
+    monoRepoSubDirectoryPath: frontend
+    url: https://github.com/diegopereiraeng/guest_flow/tree/main/frontend
 metadata:
-  name: guestflow-web
-  description: >
+  description: |
     Frontend React SPA for the GuestFlow digital guest experience platform.
     Serves the guest-facing UI for dashboard, experiences, reservations and
     check-ins. Built with React, TypeScript and Vite.
@@ -11,15 +24,15 @@ metadata:
     backstage.io/techdocs-ref: url:https://github.com/diegopereiraeng/guest_flow/tree/main
     github.com/project-slug: diegopereiraeng/guest_flow
     harness.io/ci-pipelineIds: guestflow_web_ci
+    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
+    harness.io/pipelines: |
+      CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_web_ci/
     harness.io/sto-test-target: |
       - name: diegopereiraeng/guest_flow
         scope: TPM.Diego
         variant: main
       - name: guestflow-web
         scope: TPM.Diego
-    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
-    harness.io/pipelines: |
-      CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_web_ci/
   tags:
     - react
     - typescript
@@ -47,16 +60,3 @@ metadata:
       url: http://localhost:3000
       icon: health
       type: runbook
-spec:
-  type: service
-  lifecycle: production
-  owner: group:default/digital-experience-team
-  system: digital-experience-platform
-  sourceCode:
-    provider: Github
-    repoName: guest_flow
-    connectorRef: account.DiegoProd
-    branch: main
-    monoRepo: true
-    monoRepoSubDirectoryPath: frontend
-    url: https://github.com/diegopereiraeng/guest_flow/tree/main/frontend

@@ -1,8 +1,23 @@
-apiVersion: backstage.io/v1alpha1
+apiVersion: harness.io/v1
 kind: Component
+name: guestflow_api
+identifier: guestflow_api
+type: service
+owner: group:account/digital_experience_team
+spec:
+  lifecycle: production
+  sourceCode:
+    provider: Github
+    repoName: guest_flow
+    connectorRef: account.DiegoProd
+    branch: main
+    monoRepo: true
+    monoRepoSubDirectoryPath: backend
+    url: https://github.com/diegopereiraeng/guest_flow/tree/main/backend
+  providesApis:
+    - guestflow-openapi
 metadata:
-  name: guestflow-api
-  description: >
+  description: |
     Backend REST API for the GuestFlow digital guest experience platform.
     Exposes endpoints for dashboard metrics, experiences, reservations and
     check-ins. Built with Node.js, Express and TypeScript.
@@ -11,17 +26,17 @@ metadata:
     backstage.io/techdocs-ref: url:https://github.com/diegopereiraeng/guest_flow/tree/main
     github.com/project-slug: diegopereiraeng/guest_flow
     harness.io/ci-pipelineIds: guestflow_api_ci
+    harness.io/cd-pipelineIds: guestflow_cd
+    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
+    harness.io/pipelines: |
+      CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/
+      CD: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/cd/orgs/TPM/projects/Diego/pipelines/guestflow_cd/
     harness.io/sto-test-target: |
       - name: diegopereiraeng/guest_flow
         scope: TPM.Diego
         variant: main
       - name: guestflow-api
         scope: TPM.Diego
-    harness.io/cd-pipelineIds: guestflow_cd
-    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
-    harness.io/pipelines: |
-      CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/
-      CD: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/cd/orgs/TPM/projects/Diego/pipelines/guestflow_cd/
   tags:
     - nodejs
     - typescript
@@ -53,18 +68,3 @@ metadata:
       url: http://localhost:8080/health
       icon: health
       type: runbook
-spec:
-  type: service
-  lifecycle: production
-  owner: group:default/digital-experience-team
-  system: digital-experience-platform
-  sourceCode:
-    provider: Github
-    repoName: guest_flow
-    connectorRef: account.DiegoProd
-    branch: main
-    monoRepo: true
-    monoRepoSubDirectoryPath: backend
-    url: https://github.com/diegopereiraeng/guest_flow/tree/main/backend
-  providesApis:
-    - guestflow-openapi
