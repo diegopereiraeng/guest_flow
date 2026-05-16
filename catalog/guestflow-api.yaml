@@ -14,7 +14,9 @@ metadata:
     harness.io/sto-test-target: "guestflow-api"
     harness.io/cd-pipelineIds: guestflow_cd
     harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
-    harness.io/pipelines: guestflow_api_ci,guestflow_cd
+    harness.io/pipelines: |
+      CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/executions
+      CD: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/pipelines/guestflow_cd/executions
   tags:
     - nodejs
     - typescript
