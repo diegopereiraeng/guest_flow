@@ -10,8 +10,9 @@ metadata:
     backstage.io/source-location: url:https://github.com/diegopereiraeng/guest_flow/tree/main/frontend
     backstage.io/techdocs-ref: dir:.
     github.com/project-slug: diegopereiraeng/guest_flow
-    harness.io/ci-pipelineId: guestflow_web_ci
-    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/all/orgs/TPM/projects/Diego
+    harness.io/ci-pipelineIds: guestflow_web_ci
+    harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
+    harness.io/pipelines: guestflow_web_ci
   tags:
     - react
     - typescript
@@ -19,6 +20,22 @@ metadata:
     - frontend
     - guest-experience
   links:
+    - title: CI Pipeline
+      url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/pipelines/guestflow_web_ci/executions
+      icon: dashboard
+      type: dashboard
+    - title: SonarCloud Quality
+      url: https://sonarcloud.io/project/overview?id=guestflow
+      icon: dashboard
+      type: dashboard
+    - title: Security Dashboard (STO)
+      url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/sto
+      icon: warning
+      type: dashboard
+    - title: Coverage Report
+      url: https://github.com/diegopereiraeng/guest_flow/tree/main/frontend/coverage
+      icon: docs
+      type: documentation
     - title: Health Check
       url: http://localhost:3000
       icon: health
