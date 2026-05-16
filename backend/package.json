@@ -1,6 +1,7 @@
 {
   "name": "guestflow-api",
   "version": "1.0.0",
+  "private": true,
   "description": "GuestFlow backend API",
   "main": "dist/server.js",
   "scripts": {
