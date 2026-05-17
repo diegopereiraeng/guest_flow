@@ -1,24 +1,29 @@
 apiVersion: harness.io/v1
 kind: API
-name: guestflow_openapi
+type: openapi
 identifier: guestflow_openapi
+name: GuestFlow OpenAPI
 owner: group:account/_account_all_users
+orgIdentifier: TPM
+projectIdentifier: Diego
+spec:
+  lifecycle: production
+  definition:
+    $text: https://raw.githubusercontent.com/diegopereiraeng/guest_flow/main/docs/openapi.yaml
 metadata:
-  name: guestflow_openapi
   description: GuestFlow REST API — OpenAPI 3.0 spec auto-generated from JSDoc annotations on every CI run.
   annotations:
-    backstage.io/source-location: url:https://github.com/diegopereiraeng/guest_flow/tree/main/docs
     backstage.io/techdocs-ref: url:https://github.com/diegopereiraeng/guest_flow/tree/main
     github.com/project-slug: diegopereiraeng/guest_flow
   tags:
     - rest
     - openapi
     - nodejs
-spec:
-  type: openapi
-  lifecycle: production
-  owner: group:account/_account_all_users
-  system: digital-experience-platform
-  providedBy: component:account/guestflow_api
-  definition:
-    $text: https://raw.githubusercontent.com/diegopereiraeng/guest_flow/main/docs/openapi.yaml
+  links:
+    - title: API Spec (raw)
+      url: https://raw.githubusercontent.com/diegopereiraeng/guest_flow/main/docs/openapi.yaml
+      icon: code
+      type: documentation
+    - title: GitHub
+      url: https://github.com/diegopereiraeng/guest_flow/blob/main/docs/openapi.yaml
+      icon: github
