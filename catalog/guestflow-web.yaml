@@ -12,7 +12,7 @@ metadata:
     harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
     harness.io/pipelines: |
       CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_web_ci/
-    harness.io/sto-test-target: |
+    harness.io/sto-test-target:
       - name: diegopereiraeng/guest_flow
         scope: TPM.Diego
         variant: main
