@@ -2,7 +2,7 @@ apiVersion: harness.io/v1
 kind: API
 name: guestflow_openapi
 identifier: guestflow_openapi
-owner: group:digital_experience_team
+owner: group:account/_account_all_users
 metadata:
   name: guestflow_openapi
   description: GuestFlow REST API — OpenAPI 3.0 spec auto-generated from JSDoc annotations on every CI run.
@@ -17,7 +17,7 @@ metadata:
 spec:
   type: openapi
   lifecycle: production
-  owner: group:default/digital-experience-team
+  owner: group:account/_account_all_users
   system: digital-experience-platform
   definition:
     $text: https://raw.githubusercontent.com/diegopereiraeng/guest_flow/main/docs/openapi.yaml

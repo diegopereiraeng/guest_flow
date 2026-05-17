@@ -3,7 +3,7 @@ kind: Component
 name: guestflow_web
 identifier: guestflow_web
 type: service
-owner: group:digital_experience_team
+owner: group:account/_account_all_users
 spec:
   lifecycle: production
   sourceCode:
