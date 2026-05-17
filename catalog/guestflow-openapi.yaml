@@ -7,7 +7,7 @@ owner: group:account/_account_all_users
 spec:
   lifecycle: production
   definition:
-    $text: https://raw.githubusercontent.com/diegopereiraeng/guest_flow/main/docs/openapi.yaml
+    $yaml: https://raw.githubusercontent.com/diegopereiraeng/guest_flow/main/docs/openapi.yaml
 metadata:
   description: GuestFlow REST API — OpenAPI 3.0 spec auto-generated from JSDoc annotations
     on every CI run.
