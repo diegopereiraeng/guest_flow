@@ -1,7 +1,20 @@
-apiVersion: backstage.io/v1alpha1
+apiVersion: harness.io/v1
 kind: Component
+name: guestflow_web
+identifier: guestflow_web
+type: service
+owner: group:digital_experience_team
+spec:
+  lifecycle: production
+  sourceCode:
+    provider: Github
+    repoName: guest_flow
+    connectorRef: account.DiegoProd
+    branch: main
+    monoRepo: true
+    monoRepoSubDirectoryPath: frontend
+    url: https://github.com/diegopereiraeng/guest_flow/tree/main/frontend
 metadata:
-  name: guestflow_web
   description: |
     Frontend React SPA for the GuestFlow digital guest experience platform.
     Serves the guest-facing UI for dashboard, experiences, reservations and
@@ -12,13 +25,7 @@ metadata:
     harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
     harness.io/pipelines: |
       CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_web_ci/
-    harness.io/sto-test-target:
-      - name: diegopereiraeng/guest_flow
-        scope: TPM.Diego
-        variant: main
-      - name: guestflow-web
-        scope: TPM.Diego
-        variant: main
+    harness.io/sto-test-target: '[{"name":"diegopereiraeng/guest_flow","scope":"TPM.Diego","variant":"main"},{"name":"guestflow-web","scope":"TPM.Diego","variant":"main"}]'
   tags:
     - react
     - typescript
@@ -46,8 +53,3 @@ metadata:
       url: http://localhost:3000
       icon: health
       type: runbook
-spec:
-  type: service
-  lifecycle: production
-  owner: group:default/digital-experience-team
-  system: digital-experience-platform

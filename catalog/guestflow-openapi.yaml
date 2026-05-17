@@ -1,7 +1,10 @@
-apiVersion: backstage.io/v1alpha1
+apiVersion: harness.io/v1
 kind: API
+name: guestflow_openapi
+identifier: guestflow_openapi
+owner: group:digital_experience_team
 metadata:
-  name: guestflow-openapi
+  name: guestflow_openapi
   description: GuestFlow REST API — OpenAPI 3.0 spec auto-generated from JSDoc annotations on every CI run.
   annotations:
     backstage.io/source-location: url:https://github.com/diegopereiraeng/guest_flow/tree/main/docs
