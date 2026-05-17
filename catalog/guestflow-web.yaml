@@ -1,20 +1,7 @@
-apiVersion: harness.io/v1
+apiVersion: backstage.io/v1alpha1
 kind: Component
-name: guestflow_web
-identifier: guestflow_web
-type: service
-owner: group:digital_experience_team
-spec:
-  lifecycle: production
-  sourceCode:
-    provider: Github
-    repoName: guest_flow
-    connectorRef: account.DiegoProd
-    branch: main
-    monoRepo: true
-    monoRepoSubDirectoryPath: frontend
-    url: https://github.com/diegopereiraeng/guest_flow/tree/main/frontend
 metadata:
+  name: guestflow_web
   description: |
     Frontend React SPA for the GuestFlow digital guest experience platform.
     Serves the guest-facing UI for dashboard, experiences, reservations and
@@ -58,3 +45,8 @@ metadata:
       url: http://localhost:3000
       icon: health
       type: runbook
+spec:
+  type: service
+  lifecycle: production
+  owner: group:default/digital-experience-team
+  system: digital-experience-platform

@@ -1,22 +1,7 @@
-apiVersion: harness.io/v1
+apiVersion: backstage.io/v1alpha1
 kind: Component
-name: guestflow_api
-identifier: guestflow_api
-type: service
-owner: group:digital_experience_team
-spec:
-  lifecycle: production
-  sourceCode:
-    provider: Github
-    repoName: guest_flow
-    connectorRef: account.DiegoProd
-    branch: main
-    monoRepo: true
-    monoRepoSubDirectoryPath: backend
-    url: https://github.com/diegopereiraeng/guest_flow/tree/main/backend
-  providesApis:
-    - guestflow-openapi
 metadata:
+  name: guestflow_api
   description: |
     Backend REST API for the GuestFlow digital guest experience platform.
     Exposes endpoints for dashboard metrics, experiences, reservations and
@@ -65,3 +50,10 @@ metadata:
       url: http://localhost:8080/health
       icon: health
       type: runbook
+spec:
+  type: service
+  lifecycle: production
+  owner: group:default/digital-experience-team
+  system: digital-experience-platform
+  providesApis:
+    - guestflow-openapi
