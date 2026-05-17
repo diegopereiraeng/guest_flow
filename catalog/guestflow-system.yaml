@@ -7,8 +7,6 @@ kind: System
 identifier: digital_experience_platform
 name: Digital Experience Platform
 owner: group:account/digital-experience-team
-orgIdentifier: TPM
-projectIdentifier: Diego
 
 metadata:
   description: >

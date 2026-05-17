@@ -4,8 +4,6 @@ type: openapi
 identifier: guestflow_openapi
 name: GuestFlow OpenAPI
 owner: group:account/_account_all_users
-orgIdentifier: TPM
-projectIdentifier: Diego
 spec:
   lifecycle: production
   definition:

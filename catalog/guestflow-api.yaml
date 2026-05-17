@@ -4,8 +4,6 @@ identifier: guestflow_api
 name: GuestFlow API
 type: service
 owner: group:account/_account_all_users
-orgIdentifier: TPM
-projectIdentifier: Diego
 spec:
   lifecycle: production
   sourceCode:
