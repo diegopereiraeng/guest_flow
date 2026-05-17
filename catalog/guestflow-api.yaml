@@ -19,6 +19,7 @@ metadata:
         variant: main
       - name: guestflow-api
         scope: TPM.Diego
+        variant: main
   tags:
     - nodejs
     - typescript

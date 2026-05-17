@@ -18,6 +18,7 @@ metadata:
         variant: main
       - name: guestflow-web
         scope: TPM.Diego
+        variant: main
   tags:
     - react
     - typescript
