@@ -7,7 +7,7 @@ owner: group:account/_account_all_users
 spec:
   lifecycle: production
   providesApis:
-    - api:account/guestflow_openapi
+    - api:guestflow_openapi
   sourceCode:
     provider: Github
     repoName: guest_flow
