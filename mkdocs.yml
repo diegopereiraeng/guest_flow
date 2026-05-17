@@ -9,4 +9,7 @@ nav:
   - Runbook: runbook.md
 
 theme:
-  name: techdocs-core
+  name: material
+
+plugins:
+  - techdocs-core

@@ -15,5 +15,6 @@ spec:
   type: openapi
   lifecycle: production
   owner: group:default/digital-experience-team
+  system: digital-experience-platform
   definition:
     $text: https://raw.githubusercontent.com/diegopereiraeng/guest_flow/main/docs/openapi.yaml
