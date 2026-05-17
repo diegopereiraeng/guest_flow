@@ -6,6 +6,8 @@ type: service
 owner: group:account/_account_all_users
 spec:
   lifecycle: production
+  providesApis:
+    - guestflow_openapi
   sourceCode:
     provider: Github
     repoName: guest_flow
