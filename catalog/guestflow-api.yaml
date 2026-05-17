@@ -26,7 +26,16 @@ metadata:
     harness.io/pipelines: |
       CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/
       CD: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/cd/orgs/TPM/projects/Diego/pipelines/guestflow_cd/
-    harness.io/sto-test-target: '[{"name":"diegopereiraeng/guest_flow","scope":"TPM.Diego","variant":"main"},{"name":"guestflow-api","scope":"TPM.Diego","variant":"main"}]'
+    harness.io/sto-test-target: 
+      - name: diegopereiraeng/guest_flow
+        scope: TPM.Diego
+        variant: main
+      - name: guestflow-api
+        scope: TPM.Diego
+        variant: main
+      - name: guestflow-api
+        scope: TPM.Diego
+        variant: latest
   tags:
     - nodejs
     - typescript
