@@ -20,7 +20,7 @@ metadata:
   description: |
     Backend REST API for the GuestFlow digital guest experience platform.
     Exposes endpoints for dashboard metrics, experiences, reservations and
-    check-ins. Built with Node.js, Express and TypeScript.
+    check-ins. Built with Node.js, Express and TypeScript..
   annotations:
     backstage.io/techdocs-ref: url:https://github.com/diegopereiraeng/guest_flow/tree/main
     github.com/project-slug: diegopereiraeng/guest_flow
