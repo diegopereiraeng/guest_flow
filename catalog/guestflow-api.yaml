@@ -7,7 +7,7 @@ owner: group:account/_account_all_users
 spec:
   lifecycle: production
   providesApis:
-    - api:account/guestflow_openapi
+  - api:account/guestflow_openapi
   sourceCode:
     provider: Github
     repoName: guest_flow
@@ -24,7 +24,7 @@ metadata:
   annotations:
     backstage.io/techdocs-ref: url:https://github.com/diegopereiraeng/guest_flow/tree/main
     github.com/project-slug: diegopereiraeng/guest_flow
-    catalog.last-synced: "2026-05-17T17:38:35Z"
+    catalog.last-synced: '2026-05-17T17:38:35Z'
     harness.io/project-url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego
     harness.io/pipelines: |
       CI: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/
@@ -39,34 +39,34 @@ metadata:
     - name: guestflow-api
       scope: TPM.Diego
       variant: latest
-  tags:
-    - nodejs
-    - typescript
-    - express
-    - rest-api
-    - guest-experience
   links:
-    - title: CI Pipeline
-      url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/executions
-      icon: dashboard
-      type: dashboard
-    - title: SonarCloud Quality
-      url: https://sonarcloud.io/project/overview?id=guestflow
-      icon: dashboard
-      type: dashboard
-    - title: Security Dashboard (STO)
-      url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/sto
-      icon: warning
-      type: dashboard
-    - title: OpenAPI Contract
-      url: https://github.com/diegopereiraeng/guest_flow/blob/main/docs/openapi.yaml
-      icon: docs
-      type: documentation
-    - title: Runbook
-      url: https://github.com/diegopereiraeng/guest_flow/blob/main/docs/runbook.md
-      icon: docs
-      type: runbook
-    - title: Health Check
-      url: http://localhost:8080/health
-      icon: health
-      type: runbook
+  - title: CI Pipeline
+    url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/pipelines/guestflow_api_ci/executions
+    icon: dashboard
+    type: dashboard
+  - title: SonarCloud Quality
+    url: https://sonarcloud.io/project/overview?id=guestflow
+    icon: dashboard
+    type: dashboard
+  - title: Security Dashboard (STO)
+    url: https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/orgs/TPM/projects/Diego/sto
+    icon: warning
+    type: dashboard
+  - title: OpenAPI Contract
+    url: https://github.com/diegopereiraeng/guest_flow/blob/main/docs/openapi.yaml
+    icon: docs
+    type: documentation
+  - title: Runbook
+    url: https://github.com/diegopereiraeng/guest_flow/blob/main/docs/runbook.md
+    icon: docs
+    type: runbook
+  - title: Health Check
+    url: http://localhost:8080/health
+    icon: health
+    type: runbook
+  tags:
+  - nodejs
+  - typescript
+  - express
+  - rest-api
+  - guest-experience
