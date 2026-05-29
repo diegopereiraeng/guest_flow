@@ -1,0 +1,116 @@
+apiVersion: harness.io/v1
+kind: Workflow
+type: service
+identifier: onboard_existing_service
+name: Onboard Existing Service
+owner: group:account/_account_all_users
+spec:
+  parameters:
+    - title: Existing Service Details
+      description: Register an existing GitHub repo into IDP and Harness
+      required:
+        - service_name
+        - repo_name
+        - service_type
+      properties:
+        token:
+          title: Harness Token
+          type: string
+          ui:widget: password
+          ui:field: HarnessAuthToken
+        service_name:
+          title: Service Name (IDP identifier)
+          type: string
+          description: "Lowercase, hyphens only. Used as IDP entity identifier."
+          pattern: "^[a-z][a-z0-9-]*$"
+        repo_name:
+          title: GitHub Repository Name
+          type: string
+          description: "Existing repo name (without org prefix)"
+        service_type:
+          title: Service Type
+          type: string
+          enum:
+            - fullstack
+            - backend
+            - frontend
+          enumNames:
+            - "Fullstack (Backend API + Frontend SPA)"
+            - "Backend only (REST API)"
+            - "Frontend only (SPA)"
+          default: backend
+        is_monorepo:
+          title: Is Monorepo?
+          type: boolean
+          default: true
+        catalog_file_api:
+          title: Catalog File — API Component
+          type: string
+          description: "Path inside repo (e.g. catalog/my-service-api.yaml)"
+          default: "catalog/service-api.yaml"
+        catalog_file_web:
+          title: Catalog File — Web Component (if fullstack)
+          type: string
+          description: "Leave empty if not fullstack"
+          default: ""
+        catalog_file_openapi:
+          title: Catalog File — OpenAPI (if backend)
+          type: string
+          description: "Leave empty if frontend-only"
+          default: ""
+
+    - title: Harness Configuration
+      properties:
+        harness_org:
+          title: Harness Org
+          type: string
+          default: TPM
+        harness_project:
+          title: Harness Project
+          type: string
+          default: Diego
+        github_org:
+          title: GitHub Organization
+          type: string
+          default: diegopereiraeng
+
+  steps:
+    - id: onboard
+      name: Onboard Service
+      action: trigger:harness-custom-pipeline
+      input:
+        url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/scaffold_service/"
+        inputset:
+          service_name: ${{ parameters.service_name }}
+          repo_name: ${{ parameters.repo_name }}
+          service_type: ${{ parameters.service_type }}
+          is_monorepo: ${{ parameters.is_monorepo }}
+          catalog_file_api: ${{ parameters.catalog_file_api }}
+          catalog_file_web: ${{ parameters.catalog_file_web }}
+          catalog_file_openapi: ${{ parameters.catalog_file_openapi }}
+          harness_org: ${{ parameters.harness_org }}
+          harness_project: ${{ parameters.harness_project }}
+          github_org: ${{ parameters.github_org }}
+          skip_scaffold: "true"
+        apikey: ${{ parameters.token }}
+
+  output:
+    links:
+      - title: IDP Catalog
+        url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/idp/catalog"
+        icon: catalog
+      - title: GitHub Repository
+        url: "https://github.com/${{ parameters.github_org }}/${{ parameters.repo_name }}"
+        icon: github
+
+metadata:
+  description: |
+    Onboards an existing GitHub repository into IDP and Harness:
+    - Creates Harness Service from existing repo
+    - Creates CI pipeline from the standard template
+    - Imports catalog entities into IDP
+    No code generation — use for repos that already exist.
+  tags:
+    - onboard
+    - existing-service
+    - self-service

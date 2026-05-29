@@ -1,0 +1,108 @@
+apiVersion: harness.io/v1
+kind: Workflow
+type: service
+identifier: new_monorepo_service
+name: New Monorepo Service
+owner: group:account/_account_all_users
+spec:
+  parameters:
+    - title: Service Details
+      description: Define the new service basic information
+      required:
+        - service_name
+        - service_description
+        - service_type
+      properties:
+        token:
+          title: Harness Token
+          type: string
+          ui:widget: password
+          ui:field: HarnessAuthToken
+        service_name:
+          title: Service Name
+          type: string
+          description: "Lowercase letters and hyphens only (e.g. payment-service)"
+          pattern: "^[a-z][a-z0-9-]*$"
+          ui:autofocus: true
+        service_description:
+          title: Description
+          type: string
+          description: "Short description of the service purpose"
+          ui:widget: textarea
+          ui:options:
+            rows: 3
+        service_type:
+          title: Service Type
+          type: string
+          description: "What will this service contain?"
+          enum:
+            - fullstack
+            - backend
+            - frontend
+          enumNames:
+            - "Fullstack (Backend API + Frontend SPA)"
+            - "Backend only (REST API)"
+            - "Frontend only (SPA)"
+          default: fullstack
+
+    - title: Harness Configuration
+      description: Where should this service be created in Harness?
+      properties:
+        harness_org:
+          title: Harness Org
+          type: string
+          default: TPM
+        harness_project:
+          title: Harness Project
+          type: string
+          default: Diego
+        github_org:
+          title: GitHub Organization
+          type: string
+          default: diegopereiraeng
+        coverage_threshold:
+          title: Coverage Threshold (%)
+          type: string
+          default: "80"
+
+  steps:
+    - id: scaffold
+      name: Scaffold Service
+      action: trigger:harness-custom-pipeline
+      input:
+        url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/TPM/projects/Diego/pipelines/scaffold_service/"
+        inputset:
+          service_name: ${{ parameters.service_name }}
+          service_description: ${{ parameters.service_description }}
+          service_type: ${{ parameters.service_type }}
+          harness_org: ${{ parameters.harness_org }}
+          harness_project: ${{ parameters.harness_project }}
+          github_org: ${{ parameters.github_org }}
+          coverage_threshold: ${{ parameters.coverage_threshold }}
+        apikey: ${{ parameters.token }}
+
+  output:
+    links:
+      - title: GitHub Repository
+        url: "https://github.com/${{ parameters.github_org }}/${{ parameters.service_name }}"
+        icon: github
+      - title: CI Pipeline
+        url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/ci/orgs/${{ parameters.harness_org }}/projects/${{ parameters.harness_project }}/pipelines"
+        icon: pipeline
+      - title: IDP Catalog
+        url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/idp/catalog"
+        icon: catalog
+
+metadata:
+  description: |
+    Creates a new monorepo service from scratch:
+    - GitHub repo with Node.js/Express/TypeScript backend and/or React/Vite/TypeScript frontend
+    - Catalog YAMLs (api, web, openapi) pre-configured for IDP
+    - Harness Service + CI pipeline from template
+    - IDP catalog registration — all automated.
+  tags:
+    - scaffold
+    - monorepo
+    - self-service
+    - nodejs
+    - react

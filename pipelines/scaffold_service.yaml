@@ -1,0 +1,392 @@
+pipeline:
+  name: scaffold-service
+  identifier: scaffold_service
+  projectIdentifier: Diego
+  orgIdentifier: TPM
+  description: "Self-service scaffold: creates GitHub repo via cookiecutter, Harness service + pipeline, and registers catalog in IDP"
+  tags:
+    idp: ""
+    self-service: ""
+  variables:
+    - name: service_name
+      type: String
+      description: "Service name (lowercase, hyphens)"
+      value: <+input>
+    - name: service_description
+      type: String
+      description: "Short description"
+      value: <+input>
+    - name: service_type
+      type: String
+      description: "fullstack | backend | frontend"
+      value: <+input>
+    - name: harness_org
+      type: String
+      description: "Harness org identifier"
+      value: <+input>
+      default: TPM
+    - name: harness_project
+      type: String
+      description: "Harness project identifier"
+      value: <+input>
+      default: Diego
+    - name: github_org
+      type: String
+      description: "GitHub organization"
+      value: <+input>
+      default: diegopereiraeng
+    - name: coverage_threshold
+      type: String
+      description: "Min coverage % (default 80)"
+      value: <+input>
+      default: "80"
+    - name: skip_scaffold
+      type: String
+      description: "Set true to skip repo creation (onboard existing)"
+      value: <+input>
+      default: "false"
+
+  stages:
+    # ─────────────────────────────────────────────────────────────
+    # Stage 1 — Scaffold: cookiecutter → create GitHub repo → push
+    # ─────────────────────────────────────────────────────────────
+    - stage:
+        name: Scaffold
+        identifier: scaffold_stage
+        type: CI
+        when:
+          condition: <+pipeline.variables.skip_scaffold> != "true"
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Generate from Template
+                  identifier: generate_template
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      set -e
+                      apk add --no-cache python3 py3-pip git curl jq
+                      pip install --quiet cookiecutter
+
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      SERVICE_DESC="<+pipeline.variables.service_description>"
+                      GITHUB_ORG="<+pipeline.variables.github_org>"
+                      HARNESS_ORG="<+pipeline.variables.harness_org>"
+                      HARNESS_PROJECT="<+pipeline.variables.harness_project>"
+                      COVERAGE_THRESHOLD="<+pipeline.variables.coverage_threshold>"
+
+                      echo "==> Generating service: $SERVICE_NAME ($SERVICE_TYPE)"
+
+                      cookiecutter gh:diegopereiraeng/cookiecutter-harness-service \
+                        --no-input \
+                        --output-dir /workspace \
+                        service_name="$SERVICE_NAME" \
+                        service_description="$SERVICE_DESC" \
+                        service_type="$SERVICE_TYPE" \
+                        owner_email="<+pipeline.triggeredBy.email>" \
+                        github_org="$GITHUB_ORG" \
+                        harness_org="$HARNESS_ORG" \
+                        harness_project="$HARNESS_PROJECT" \
+                        coverage_threshold="$COVERAGE_THRESHOLD"
+
+                      echo "==> Generated files:"
+                      find /workspace/$SERVICE_NAME -type f | head -40
+
+              - step:
+                  name: Create GitHub Repo and Push
+                  identifier: create_github_repo
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      set -e
+                      GH_TOKEN=<+secrets.getValue("github_pat")>
+                      GITHUB_ORG="<+pipeline.variables.github_org>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_DESC="<+pipeline.variables.service_description>"
+
+                      echo "==> Creating GitHub repo: $GITHUB_ORG/$SERVICE_NAME"
+
+                      # Create repo via GitHub API
+                      RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
+                        "https://api.github.com/orgs/$GITHUB_ORG/repos" \
+                        -H "Authorization: Bearer $GH_TOKEN" \
+                        -H "Content-Type: application/json" \
+                        -d "{
+                          \"name\": \"$SERVICE_NAME\",
+                          \"description\": \"$SERVICE_DESC\",
+                          \"private\": false,
+                          \"auto_init\": false
+                        }")
+                      HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+
+                      if [ "$HTTP_CODE" = "422" ]; then
+                        echo "Repo already exists — continuing"
+                      elif [ "$HTTP_CODE" != "201" ]; then
+                        echo "Failed to create repo (HTTP $HTTP_CODE)"
+                        echo "$RESP"
+                        exit 1
+                      else
+                        echo "Repo created successfully"
+                      fi
+
+                      # Push generated code
+                      cd /workspace/$SERVICE_NAME
+                      git config --global user.email "ci-bot@harness.io"
+                      git config --global user.name "Harness Scaffold"
+
+                      git init
+                      git add -A
+                      git commit -m "chore: initial scaffold from cookiecutter-harness-service [ci skip]"
+                      git branch -M main
+                      git remote add origin "https://$GH_TOKEN@github.com/$GITHUB_ORG/$SERVICE_NAME.git"
+                      git push -u origin main
+
+                      echo "==> Pushed to https://github.com/$GITHUB_ORG/$SERVICE_NAME"
+
+    # ─────────────────────────────────────────────────────────────
+    # Stage 2 — Harness Resources: Service + Pipeline from template
+    # ─────────────────────────────────────────────────────────────
+    - stage:
+        name: Harness Resources
+        identifier: harness_resources_stage
+        type: CI
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Create Harness Service
+                  identifier: create_harness_service
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      set -e
+                      KEY=<+secrets.getValue("harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJECT="<+pipeline.variables.harness_project>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
+
+                      echo "==> Creating Harness service: $SERVICE_ID"
+
+                      RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
+                        "https://app.harness.io/ng/api/servicesV2?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJECT" \
+                        -H "x-api-key: $KEY" \
+                        -H "Content-Type: application/json" \
+                        -d "{
+                          \"name\": \"$SERVICE_NAME\",
+                          \"identifier\": \"${SERVICE_ID}\",
+                          \"orgIdentifier\": \"$ORG\",
+                          \"projectIdentifier\": \"$PROJECT\",
+                          \"description\": \"<+pipeline.variables.service_description>\",
+                          \"tags\": {
+                            \"scaffold\": \"\",
+                            \"service_type\": \"$SERVICE_TYPE\"
+                          }
+                        }")
+                      HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+
+                      if echo "$RESP" | grep -q "already exists\|DUPLICATE"; then
+                        echo "Service already exists — skipping"
+                      elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+                        echo "Service created: $SERVICE_ID"
+                      else
+                        echo "Warning: service creation returned HTTP $HTTP_CODE"
+                        echo "$RESP" | grep -v "HTTP:"
+                      fi
+
+              - step:
+                  name: Create CI Pipeline from Template
+                  identifier: create_ci_pipeline
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      set -e
+                      KEY=<+secrets.getValue("harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJECT="<+pipeline.variables.harness_project>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
+                      GITHUB_ORG="<+pipeline.variables.github_org>"
+
+                      has_backend() { [ "$SERVICE_TYPE" = "fullstack" ] || [ "$SERVICE_TYPE" = "backend" ]; }
+                      has_frontend() { [ "$SERVICE_TYPE" = "fullstack" ] || [ "$SERVICE_TYPE" = "frontend" ]; }
+
+                      create_pipeline() {
+                        local PIPE_ID="$1"
+                        local PIPE_NAME="$2"
+                        local SERVICE_DIR="$3"
+                        local IMAGE_NAME="$4"
+                        local CATALOG_ENTITY="$5"
+                        local CATALOG_FILE="$6"
+                        local OPENAPI_FILE="$7"
+                        local DOCKERFILE="$SERVICE_DIR/Dockerfile"
+                        local DOCKER_CONTEXT="$SERVICE_DIR"
+
+                        echo "==> Creating pipeline: $PIPE_ID"
+
+                        RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
+                          "https://app.harness.io/template/api/templates/applyTemplates?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJECT&pipelineIdentifier=$PIPE_ID&getDefaultFromOtherRepo=false" \
+                          -H "x-api-key: $KEY" \
+                          -H "Content-Type: application/yaml" \
+                          -d "pipeline:
+                            name: $PIPE_NAME
+                            identifier: $PIPE_ID
+                            projectIdentifier: $PROJECT
+                            orgIdentifier: $ORG
+                            template:
+                              templateRef: guestflow_service_pipeline
+                              versionLabel: 1.0.0
+                              templateInputs:
+                                variables:
+                                  - name: SERVICE_DIR
+                                    type: String
+                                    value: $SERVICE_DIR
+                                  - name: IMAGE_NAME
+                                    type: String
+                                    value: $IMAGE_NAME
+                                  - name: DOCKERFILE
+                                    type: String
+                                    value: $DOCKERFILE
+                                  - name: DOCKER_CONTEXT
+                                    type: String
+                                    value: $DOCKER_CONTEXT
+                                  - name: CATALOG_ENTITY
+                                    type: String
+                                    value: $CATALOG_ENTITY
+                                  - name: CATALOG_FILE
+                                    type: String
+                                    value: $CATALOG_FILE
+                                  - name: OPENAPI_FILE
+                                    type: String
+                                    value: $OPENAPI_FILE")
+
+                        HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+                        echo "Pipeline $PIPE_ID → HTTP $HTTP_CODE"
+                      }
+
+                      if has_backend; then
+                        create_pipeline \
+                          "${SERVICE_ID}_api_ci" \
+                          "$SERVICE_NAME API CI" \
+                          "backend" \
+                          "${SERVICE_NAME}-api" \
+                          "${SERVICE_ID}_api" \
+                          "catalog/${SERVICE_NAME}-api.yaml" \
+                          "catalog/${SERVICE_NAME}-openapi.yaml"
+                      fi
+
+                      if has_frontend; then
+                        create_pipeline \
+                          "${SERVICE_ID}_web_ci" \
+                          "$SERVICE_NAME Web CI" \
+                          "frontend" \
+                          "${SERVICE_NAME}-web" \
+                          "${SERVICE_ID}_web" \
+                          "catalog/${SERVICE_NAME}-web.yaml" \
+                          ""
+                      fi
+
+    # ─────────────────────────────────────────────────────────────
+    # Stage 3 — Catalog: import entities into IDP
+    # ─────────────────────────────────────────────────────────────
+    - stage:
+        name: Register Catalog
+        identifier: register_catalog_stage
+        type: CI
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Import Catalog Entities
+                  identifier: import_catalog
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      set -e
+                      KEY=<+secrets.getValue("harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      GITHUB_ORG="<+pipeline.variables.github_org>"
+
+                      import_entity() {
+                        local FILE_PATH="$1"
+                        local LABEL="$2"
+                        echo "==> Importing $LABEL ($FILE_PATH)"
+
+                        RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
+                          "https://app.harness.io/v1/entities/import?orgIdentifier=TPM&projectIdentifier=Diego" \
+                          -H "Content-Type: application/json" \
+                          -H "Harness-Account: $ACCOUNT" \
+                          -H "x-api-key: $KEY" \
+                          -d "{
+                            \"connector_ref\": \"account.DiegoProd\",
+                            \"repo_name\": \"$SERVICE_NAME\",
+                            \"branch_name\": \"main\",
+                            \"file_path\": \"$FILE_PATH\",
+                            \"is_harness_code_repo\": false
+                          }")
+
+                        HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+                        BODY=$(echo "$RESP" | grep -v "^HTTP:")
+
+                        if [ "$HTTP_CODE" = "201" ]; then
+                          echo "✅ $LABEL registered"
+                        elif echo "$BODY" | grep -q "DUPLICATE_FILE_IMPORT"; then
+                          echo "✅ $LABEL already registered — IDP will auto-sync"
+                        else
+                          echo "⚠️  $LABEL → HTTP $HTTP_CODE"
+                          echo "$BODY"
+                        fi
+                      }
+
+                      case "$SERVICE_TYPE" in
+                        fullstack)
+                          import_entity "catalog/$SERVICE_NAME-api.yaml"     "API component"
+                          import_entity "catalog/$SERVICE_NAME-web.yaml"     "Web component"
+                          import_entity "catalog/$SERVICE_NAME-openapi.yaml" "OpenAPI entity"
+                          ;;
+                        backend)
+                          import_entity "catalog/$SERVICE_NAME-api.yaml"     "API component"
+                          import_entity "catalog/$SERVICE_NAME-openapi.yaml" "OpenAPI entity"
+                          ;;
+                        frontend)
+                          import_entity "catalog/$SERVICE_NAME-web.yaml"     "Web component"
+                          ;;
+                      esac
+
+                      echo ""
+                      echo "==> Catalog registration complete"
+                      echo "View at: https://app.harness.io/ng/account/$ACCOUNT/module/idp/catalog"
