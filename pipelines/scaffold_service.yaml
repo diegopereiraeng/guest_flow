@@ -3,7 +3,7 @@ pipeline:
   identifier: scaffold_service
   projectIdentifier: Diego
   orgIdentifier: TPM
-  description: "Self-service scaffold: creates GitHub repo via cookiecutter, Harness service + pipeline, and registers catalog in IDP"
+  description: "Self-service scaffold: cookiecutter → GitHub repo → Harness service + pipeline → IDP catalog"
   tags:
     idp: ""
     self-service: ""
@@ -23,28 +23,23 @@ pipeline:
     - name: harness_org
       type: String
       description: "Harness org identifier"
-      value: <+input>
-      default: TPM
+      value: TPM
     - name: harness_project
       type: String
       description: "Harness project identifier"
-      value: <+input>
-      default: Diego
+      value: Diego
     - name: github_org
       type: String
       description: "GitHub organization"
-      value: <+input>
-      default: diegopereiraeng
+      value: diegopereiraeng
     - name: coverage_threshold
       type: String
       description: "Min coverage % (default 80)"
-      value: <+input>
-      default: "80"
+      value: "80"
     - name: skip_scaffold
       type: String
       description: "Set true to skip repo creation (onboard existing)"
-      value: <+input>
-      default: "false"
+      value: "false"
 
   stages:
     # ─────────────────────────────────────────────────────────────
@@ -55,6 +50,7 @@ pipeline:
         identifier: scaffold_stage
         type: CI
         when:
+          pipelineStatus: Success
           condition: <+pipeline.variables.skip_scaffold> != "true"
         spec:
           cloneCodebase: false
@@ -67,14 +63,17 @@ pipeline:
           execution:
             steps:
               - step:
-                  name: Generate from Template
+                  name: Generate from Cookiecutter Template
                   identifier: generate_template
                   type: Run
+                  timeout: 10m
                   spec:
                     shell: Sh
                     command: |
                       set -e
                       apk add --no-cache python3 py3-pip git curl jq
+
+                      # Install cookiecutter
                       pip install --quiet cookiecutter
 
                       SERVICE_NAME="<+pipeline.variables.service_name>"
@@ -85,11 +84,11 @@ pipeline:
                       HARNESS_PROJECT="<+pipeline.variables.harness_project>"
                       COVERAGE_THRESHOLD="<+pipeline.variables.coverage_threshold>"
 
-                      echo "==> Generating service: $SERVICE_NAME ($SERVICE_TYPE)"
+                      echo "==> Generating: $SERVICE_NAME ($SERVICE_TYPE)"
 
-                      cookiecutter gh:diegopereiraeng/cookiecutter-harness-service \
+                      cookiecutter https://github.com/diegopereiraeng/cookiecutter-harness-service.git \
                         --no-input \
-                        --output-dir /workspace \
+                        --output-dir /harness \
                         service_name="$SERVICE_NAME" \
                         service_description="$SERVICE_DESC" \
                         service_type="$SERVICE_TYPE" \
@@ -100,12 +99,13 @@ pipeline:
                         coverage_threshold="$COVERAGE_THRESHOLD"
 
                       echo "==> Generated files:"
-                      find /workspace/$SERVICE_NAME -type f | head -40
+                      find /harness/$SERVICE_NAME -type f | grep -v node_modules | sort
 
               - step:
                   name: Create GitHub Repo and Push
                   identifier: create_github_repo
                   type: Run
+                  timeout: 10m
                   spec:
                     shell: Sh
                     command: |
@@ -117,10 +117,10 @@ pipeline:
 
                       echo "==> Creating GitHub repo: $GITHUB_ORG/$SERVICE_NAME"
 
-                      # Create repo via GitHub API
                       RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
                         "https://api.github.com/orgs/$GITHUB_ORG/repos" \
                         -H "Authorization: Bearer $GH_TOKEN" \
+                        -H "Accept: application/vnd.github+json" \
                         -H "Content-Type: application/json" \
                         -d "{
                           \"name\": \"$SERVICE_NAME\",
@@ -129,30 +129,32 @@ pipeline:
                           \"auto_init\": false
                         }")
                       HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+                      BODY=$(echo "$RESP" | grep -v "^HTTP:")
 
-                      if [ "$HTTP_CODE" = "422" ]; then
-                        echo "Repo already exists — continuing"
-                      elif [ "$HTTP_CODE" != "201" ]; then
-                        echo "Failed to create repo (HTTP $HTTP_CODE)"
-                        echo "$RESP"
-                        exit 1
+                      if [ "$HTTP_CODE" = "422" ] || echo "$BODY" | grep -q "already exists"; then
+                        echo "Repo already exists — continuing with push"
+                      elif [ "$HTTP_CODE" = "201" ]; then
+                        echo "✅ Repo created: https://github.com/$GITHUB_ORG/$SERVICE_NAME"
                       else
-                        echo "Repo created successfully"
+                        echo "❌ Failed to create repo (HTTP $HTTP_CODE)"
+                        echo "$BODY"
+                        exit 1
                       fi
 
-                      # Push generated code
-                      cd /workspace/$SERVICE_NAME
+                      # Configure git and push
+                      cd /harness/$SERVICE_NAME
                       git config --global user.email "ci-bot@harness.io"
                       git config --global user.name "Harness Scaffold"
+                      git config --global --add safe.directory '*'
 
                       git init
                       git add -A
                       git commit -m "chore: initial scaffold from cookiecutter-harness-service [ci skip]"
                       git branch -M main
-                      git remote add origin "https://$GH_TOKEN@github.com/$GITHUB_ORG/$SERVICE_NAME.git"
+                      git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_ORG}/${SERVICE_NAME}.git"
                       git push -u origin main
 
-                      echo "==> Pushed to https://github.com/$GITHUB_ORG/$SERVICE_NAME"
+                      echo "✅ Pushed to https://github.com/$GITHUB_ORG/$SERVICE_NAME"
 
     # ─────────────────────────────────────────────────────────────
     # Stage 2 — Harness Resources: Service + Pipeline from template
@@ -206,12 +208,12 @@ pipeline:
                         }")
                       HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
 
-                      if echo "$RESP" | grep -q "already exists\|DUPLICATE"; then
-                        echo "Service already exists — skipping"
+                      if echo "$RESP" | grep -q "already exists\|DUPLICATE\|409"; then
+                        echo "✅ Service already exists — skipping"
                       elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
-                        echo "Service created: $SERVICE_ID"
+                        echo "✅ Service created: $SERVICE_ID"
                       else
-                        echo "Warning: service creation returned HTTP $HTTP_CODE"
+                        echo "⚠️  Service creation returned HTTP $HTTP_CODE (non-blocking)"
                         echo "$RESP" | grep -v "HTTP:"
                       fi
 
@@ -230,62 +232,72 @@ pipeline:
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
                       SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
-                      GITHUB_ORG="<+pipeline.variables.github_org>"
 
-                      has_backend() { [ "$SERVICE_TYPE" = "fullstack" ] || [ "$SERVICE_TYPE" = "backend" ]; }
+                      has_backend()  { [ "$SERVICE_TYPE" = "fullstack" ] || [ "$SERVICE_TYPE" = "backend" ]; }
                       has_frontend() { [ "$SERVICE_TYPE" = "fullstack" ] || [ "$SERVICE_TYPE" = "frontend" ]; }
 
                       create_pipeline() {
                         local PIPE_ID="$1"
                         local PIPE_NAME="$2"
-                        local SERVICE_DIR="$3"
-                        local IMAGE_NAME="$4"
+                        local SVC_DIR="$3"
+                        local IMG_NAME="$4"
                         local CATALOG_ENTITY="$5"
                         local CATALOG_FILE="$6"
-                        local OPENAPI_FILE="$7"
-                        local DOCKERFILE="$SERVICE_DIR/Dockerfile"
-                        local DOCKER_CONTEXT="$SERVICE_DIR"
+                        local OPENAPI_FILE="${7:-}"
 
                         echo "==> Creating pipeline: $PIPE_ID"
 
+                        # Build pipeline YAML that uses guestflow_service_pipeline template
+                        PIPE_YAML="pipeline:
+                          name: $PIPE_NAME
+                          identifier: $PIPE_ID
+                          projectIdentifier: $PROJECT
+                          orgIdentifier: $ORG
+                          tags:
+                            scaffold: \"\"
+                          template:
+                            templateRef: guestflow_service_pipeline
+                            versionLabel: 1.0.0
+                            templateInputs:
+                              variables:
+                                - name: SERVICE_DIR
+                                  type: String
+                                  value: $SVC_DIR
+                                - name: IMAGE_NAME
+                                  type: String
+                                  value: $IMG_NAME
+                                - name: DOCKERFILE
+                                  type: String
+                                  value: $SVC_DIR/Dockerfile
+                                - name: DOCKER_CONTEXT
+                                  type: String
+                                  value: $SVC_DIR
+                                - name: CATALOG_ENTITY
+                                  type: String
+                                  value: $CATALOG_ENTITY
+                                - name: CATALOG_FILE
+                                  type: String
+                                  value: $CATALOG_FILE
+                                - name: OPENAPI_FILE
+                                  type: String
+                                  value: $OPENAPI_FILE"
+
                         RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
-                          "https://app.harness.io/template/api/templates/applyTemplates?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJECT&pipelineIdentifier=$PIPE_ID&getDefaultFromOtherRepo=false" \
+                          "https://app.harness.io/pipeline/api/pipelines?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJECT" \
                           -H "x-api-key: $KEY" \
                           -H "Content-Type: application/yaml" \
-                          -d "pipeline:
-                            name: $PIPE_NAME
-                            identifier: $PIPE_ID
-                            projectIdentifier: $PROJECT
-                            orgIdentifier: $ORG
-                            template:
-                              templateRef: guestflow_service_pipeline
-                              versionLabel: 1.0.0
-                              templateInputs:
-                                variables:
-                                  - name: SERVICE_DIR
-                                    type: String
-                                    value: $SERVICE_DIR
-                                  - name: IMAGE_NAME
-                                    type: String
-                                    value: $IMAGE_NAME
-                                  - name: DOCKERFILE
-                                    type: String
-                                    value: $DOCKERFILE
-                                  - name: DOCKER_CONTEXT
-                                    type: String
-                                    value: $DOCKER_CONTEXT
-                                  - name: CATALOG_ENTITY
-                                    type: String
-                                    value: $CATALOG_ENTITY
-                                  - name: CATALOG_FILE
-                                    type: String
-                                    value: $CATALOG_FILE
-                                  - name: OPENAPI_FILE
-                                    type: String
-                                    value: $OPENAPI_FILE")
+                          --data-binary "$PIPE_YAML")
 
                         HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
-                        echo "Pipeline $PIPE_ID → HTTP $HTTP_CODE"
+
+                        if echo "$RESP" | grep -q "already exists\|DUPLICATE\|409"; then
+                          echo "✅ Pipeline $PIPE_ID already exists — skipping"
+                        elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+                          echo "✅ Pipeline $PIPE_ID created"
+                        else
+                          echo "⚠️  Pipeline $PIPE_ID → HTTP $HTTP_CODE (non-blocking)"
+                          echo "$RESP" | grep -v "HTTP:" | head -5
+                        fi
                       }
 
                       if has_backend; then
@@ -339,7 +351,6 @@ pipeline:
                       ACCOUNT="<+account.identifier>"
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
-                      GITHUB_ORG="<+pipeline.variables.github_org>"
 
                       import_entity() {
                         local FILE_PATH="$1"
@@ -368,7 +379,7 @@ pipeline:
                           echo "✅ $LABEL already registered — IDP will auto-sync"
                         else
                           echo "⚠️  $LABEL → HTTP $HTTP_CODE"
-                          echo "$BODY"
+                          echo "$BODY" | head -3
                         fi
                       }
 
@@ -388,5 +399,6 @@ pipeline:
                       esac
 
                       echo ""
-                      echo "==> Catalog registration complete"
-                      echo "View at: https://app.harness.io/ng/account/$ACCOUNT/module/idp/catalog"
+                      echo "✅ Scaffold complete!"
+                      echo "   Repo:    https://github.com/<+pipeline.variables.github_org>/$SERVICE_NAME"
+                      echo "   Catalog: https://app.harness.io/ng/account/$ACCOUNT/module/idp/catalog"
