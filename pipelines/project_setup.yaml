@@ -261,7 +261,7 @@ pipeline:
                       apk add --no-cache git
 
                       KEY=<+secrets.getValue("harness_api_key")>
-                      GH_TOKEN=<+secrets.getValue("github_pat")>
+                      GH_TOKEN=<+secrets.getValue("account.github_pat")>
                       ACCOUNT="<+account.identifier>"
                       ORG="<+pipeline.variables.harness_org>"
                       PROJ_ID="<+pipeline.variables.project_identifier>"
