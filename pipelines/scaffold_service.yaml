@@ -110,7 +110,7 @@ pipeline:
                     shell: Sh
                     command: |
                       set -e
-                      GH_TOKEN=<+secrets.getValue("account.github_pat")>
+                      GH_TOKEN=<+secrets.getValue("diego-token")>
                       GITHUB_ORG="<+pipeline.variables.github_org>"
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_DESC="<+pipeline.variables.service_description>"
