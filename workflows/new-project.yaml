@@ -2,18 +2,18 @@ apiVersion: harness.io/v1
 kind: Workflow
 identifier: new_project_setup
 name: New Project Setup
-description: "Create a new Harness project, add you as admin, migrate your GitHub repo to Harness Code, create the service and CI pipeline, and register IDP catalog entities — all in one click."
+description: "Scaffold a new service from the cookiecutter template → push to GitHub → create Harness project, Harness Code repo, service, CI pipeline, and IDP catalog."
 owner: group:account/_account_all_users
 tags:
   self-service: ""
   idp: ""
 spec:
   parameters:
-    - title: Project Details
+    - title: App Identity
       required:
-        - project_name
-        - project_identifier
-        - admin_email
+        - app_name
+        - service_name
+        - service_type
         - token
       properties:
         token:
@@ -21,109 +21,139 @@ spec:
           type: string
           ui:widget: password
           ui:field: HarnessAuthToken
-        project_name:
-          title: Project Name
+        app_name:
+          title: App Name
           type: string
-          description: "Human-readable name for the new Harness project"
+          description: "Display name for your app (shown in pipelines, catalog, dashboards)"
           ui:autofocus: true
-          ui:placeholder: "My Awesome Project"
-        project_identifier:
-          title: Project Identifier
-          type: string
-          description: "Unique identifier (lowercase, underscores only)"
-          pattern: "^[a-z][a-z0-9_]*$"
-          ui:placeholder: "my_awesome_project"
-        project_description:
-          title: Project Description
-          type: string
-          description: "Short description of the project"
-          ui:placeholder: "A platform for building great things"
-          default: ""
-        admin_email:
-          title: Admin Email
-          type: string
-          description: "Email of the user to add as Project Admin"
-          format: email
-          ui:placeholder: "you@company.com"
-
-    - title: Service & Repository
-      required:
-        - service_name
-        - service_type
-        - github_repo_url
-      properties:
+          ui:placeholder: "GuestFlow API"
         service_name:
-          title: Service Name
+          title: Service Identifier
           type: string
-          description: "Service name (lowercase, hyphens) — also used as repo name"
+          description: "Technical name used for repo, folder, and catalog identifiers (lowercase, hyphens)"
           pattern: "^[a-z][a-z0-9-]*$"
-          ui:placeholder: "my-service"
+          ui:placeholder: "guest-flow"
         service_description:
-          title: Service Description
+          title: Description
           type: string
-          description: "Brief description of what this service does"
-          ui:placeholder: "A REST API for managing guest check-ins"
+          description: "One-liner describing what this service does"
+          ui:placeholder: "Hotel guest check-in and management platform"
           default: ""
         service_type:
           title: Service Type
           type: string
-          description: "Type determines which CI stages run (backend, frontend, or both)"
+          description: "Determines which CI stages and catalog entities are generated"
           enum:
             - fullstack
             - backend
             - frontend
           enumNames:
-            - "Full Stack (backend + frontend)"
-            - "Backend only (API)"
+            - "Full Stack (backend API + frontend SPA)"
+            - "Backend only (REST API)"
             - "Frontend only (SPA)"
           default: fullstack
-        github_repo_url:
-          title: GitHub Repository URL
+
+    - title: Project & Admin
+      required:
+        - project_name
+        - project_identifier
+        - admin_email
+      properties:
+        project_name:
+          title: Harness Project Name
           type: string
-          description: "Existing GitHub repo to migrate to Harness Code"
-          ui:placeholder: "https://github.com/myorg/my-repo"
+          description: "Human-readable name for the new Harness project"
+          ui:placeholder: "GuestFlow Demo"
+        project_identifier:
+          title: Harness Project Identifier
+          type: string
+          description: "Unique identifier (lowercase, underscores only)"
+          pattern: "^[a-z][a-z0-9_]*$"
+          ui:placeholder: "guestflow_demo"
+        project_description:
+          title: Project Description
+          type: string
+          description: "Short description of the project"
+          default: ""
+        admin_email:
+          title: Admin Email
+          type: string
+          description: "User to add as Project Admin"
+          format: email
+          ui:placeholder: "you@company.com"
 
     - title: Configuration
       properties:
         harness_org:
           title: Harness Organization
           type: string
-          description: "Target Harness org (leave default unless you have multiple orgs)"
           default: "TPM"
+        github_org:
+          title: GitHub Organization
+          type: string
+          default: "diegopereiraeng"
         coverage_threshold:
           title: Coverage Threshold (%)
           type: string
-          description: "Minimum test coverage required to pass CI"
           default: "80"
-          ui:placeholder: "80"
 
   steps:
+    # ─── Step 1: Scaffold code from cookiecutter template ─────────
+    - id: scaffold
+      name: Generate from Cookiecutter Template
+      action: fetch:cookiecutter
+      input:
+        url: https://github.com/diegopereiraeng/cookiecutter-harness-service
+        values:
+          service_name: ${{ parameters.service_name }}
+          service_description: ${{ parameters.service_description }}
+          service_type: ${{ parameters.service_type }}
+          owner_email: ${{ parameters.admin_email }}
+          github_org: ${{ parameters.github_org }}
+          harness_org: ${{ parameters.harness_org }}
+          harness_project: ${{ parameters.project_identifier }}
+          coverage_threshold: ${{ parameters.coverage_threshold }}
+
+    # ─── Step 2: Push scaffolded code to GitHub ───────────────────
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        allowedHosts:
+          - github.com
+        description: ${{ parameters.service_description }}
+        repoUrl: "github.com?owner=${{ parameters.github_org }}&repo=${{ parameters.service_name }}"
+        defaultBranch: main
+        repoVisibility: public
+
+    # ─── Step 3: Create Harness project, repo, service & pipeline ─
     - id: setup
-      name: Run Project Setup Pipeline
+      name: Setup Harness Infrastructure
       action: trigger:harness-custom-pipeline
       input:
         url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/all/orgs/TPM/projects/Diego/pipelines/project_setup/pipeline-studio"
         inputset:
+          app_name: ${{ parameters.app_name }}
           project_name: ${{ parameters.project_name }}
           project_identifier: ${{ parameters.project_identifier }}
           project_description: ${{ parameters.project_description }}
           admin_email: ${{ parameters.admin_email }}
-          github_repo_url: ${{ parameters.github_repo_url }}
           service_name: ${{ parameters.service_name }}
           service_description: ${{ parameters.service_description }}
           service_type: ${{ parameters.service_type }}
           harness_org: ${{ parameters.harness_org }}
+          github_org: ${{ parameters.github_org }}
           coverage_threshold: ${{ parameters.coverage_threshold }}
         apikey: ${{ parameters.token }}
 
   output:
     links:
-      - title: New Project
+      - title: GitHub Repository
+        url: "https://github.com/${{ parameters.github_org }}/${{ parameters.service_name }}"
+        icon: github
+      - title: Harness Project
         url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/all/orgs/${{ parameters.harness_org }}/projects/${{ parameters.project_identifier }}"
         icon: dashboard
-      - title: Harness Code Repo
-        url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/code/orgs/${{ parameters.harness_org }}/repos/${{ parameters.project_identifier }}/${{ parameters.service_name }}"
-        icon: github
       - title: IDP Catalog
         url: "https://app.harness.io/ng/account/8INL1LHjRmmrZQKdYtlvKA/module/idp/catalog"
         icon: catalog

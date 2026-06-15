@@ -3,14 +3,18 @@ pipeline:
   identifier: project_setup
   projectIdentifier: Diego
   orgIdentifier: TPM
-  description: "Self-service project setup: create Harness project → add admin → migrate GitHub repo to Harness Code → create service + monorepo_ci pipeline → register IDP catalog"
+  description: "Create Harness project → add admin → empty Harness Code repo → service + CI pipeline → IDP catalog. Code scaffolding is handled upstream by the IDP workflow (fetch:cookiecutter + publish:github)."
   tags:
     idp: ""
     self-service: ""
   variables:
+    - name: app_name
+      type: String
+      description: "Display name for the app (e.g. 'GuestFlow API')"
+      value: <+input>
     - name: project_name
       type: String
-      description: "Human-readable project name"
+      description: "Human-readable Harness project name"
       value: <+input>
     - name: project_identifier
       type: String
@@ -24,13 +28,9 @@ pipeline:
       type: String
       description: "Email of user to add as project admin"
       value: <+input>
-    - name: github_repo_url
-      type: String
-      description: "GitHub repo URL to migrate (e.g. https://github.com/org/repo)"
-      value: <+input>
     - name: service_name
       type: String
-      description: "Service name (lowercase, hyphens)"
+      description: "Service/repo name (lowercase, hyphens)"
       value: <+input>
     - name: service_description
       type: String
@@ -87,7 +87,7 @@ pipeline:
                       PROJ_NAME="<+pipeline.variables.project_name>"
                       PROJ_DESC="<+pipeline.variables.project_description>"
 
-                      echo "==> Creating Harness project: $PROJ_ID"
+                      echo "==> Creating project: $PROJ_NAME ($PROJ_ID)"
 
                       RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
                         "https://app.harness.io/ng/api/projects?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG" \
@@ -110,11 +110,9 @@ pipeline:
                       if echo "$BODY" | grep -q "already exists\|DUPLICATE\|already_exists"; then
                         echo "✅ Project $PROJ_ID already exists — continuing"
                       elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
-                        echo "✅ Project created: $PROJ_NAME ($PROJ_ID)"
+                        echo "✅ Project created: $PROJ_NAME"
                       else
-                        echo "❌ Failed to create project (HTTP $HTTP_CODE)"
-                        echo "$BODY"
-                        exit 1
+                        echo "❌ Failed (HTTP $HTTP_CODE)"; echo "$BODY"; exit 1
                       fi
 
               - step:
@@ -134,7 +132,6 @@ pipeline:
 
                       echo "==> Looking up user: $ADMIN_EMAIL"
 
-                      # Look up user ID by email
                       USER_RESP=$(curl -s \
                         "https://app.harness.io/ng/api/user/aggregate?accountIdentifier=$ACCOUNT&searchTerm=$ADMIN_EMAIL&pageSize=10" \
                         -H "x-api-key: $KEY")
@@ -142,8 +139,7 @@ pipeline:
                       USER_ID=$(echo "$USER_RESP" | grep -o '"uuid":"[^"]*"' | head -1 | cut -d'"' -f4)
 
                       if [ -z "$USER_ID" ]; then
-                        echo "⚠️  User $ADMIN_EMAIL not found — sending invite"
-                        # Invite user to account first
+                        echo "⚠️  User not found — sending project invite"
                         curl -s -X POST \
                           "https://app.harness.io/ng/api/invites?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
                           -H "x-api-key: $KEY" \
@@ -159,10 +155,9 @@ pipeline:
                             }],
                             \"inviteType\": \"USER_INITIATED_INVITE\"
                           }"
-                        echo "✅ Invite sent to $ADMIN_EMAIL with Project Admin role"
+                        echo "✅ Invite sent to $ADMIN_EMAIL"
                       else
-                        echo "==> Found user: $USER_ID — assigning Project Admin role"
-
+                        echo "==> Found user $USER_ID — assigning Project Admin role"
                         ROLE_RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
                           "https://app.harness.io/ng/api/roleassignments?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
                           -H "x-api-key: $KEY" \
@@ -170,18 +165,13 @@ pipeline:
                           -d "{
                             \"resourceGroupIdentifier\": \"_all_project_level_resources\",
                             \"roleIdentifier\": \"_project_admin\",
-                            \"principal\": {
-                              \"identifier\": \"$USER_ID\",
-                              \"type\": \"USER\"
-                            },
+                            \"principal\": {\"identifier\": \"$USER_ID\", \"type\": \"USER\"},
                             \"disabled\": false,
                             \"managed\": false
                           }")
-
                         HTTP_CODE=$(echo "$ROLE_RESP" | grep "HTTP:" | cut -d: -f2)
-
                         if echo "$ROLE_RESP" | grep -q "already exists\|DUPLICATE"; then
-                          echo "✅ User already has Project Admin role"
+                          echo "✅ User already has Project Admin"
                         elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
                           echo "✅ Assigned Project Admin to $ADMIN_EMAIL"
                         else
@@ -191,11 +181,12 @@ pipeline:
                       fi
 
     # ─────────────────────────────────────────────────────────────
-    # Stage 2 — Migrate GitHub Repo to Harness Code
+    # Stage 2 — Create Empty Harness Code Repo
+    # (Code is pushed by the IDP workflow via publish:github)
     # ─────────────────────────────────────────────────────────────
     - stage:
-        name: Migrate Repo
-        identifier: migrate_repo_stage
+        name: Create Repo
+        identifier: create_repo_stage
         type: CI
         spec:
           cloneCodebase: false
@@ -208,7 +199,7 @@ pipeline:
           execution:
             steps:
               - step:
-                  name: Create Harness Code Repo
+                  name: Create Empty Harness Code Repo
                   identifier: create_harness_repo
                   type: Run
                   timeout: 5m
@@ -240,59 +231,16 @@ pipeline:
                       BODY=$(echo "$RESP" | grep -v "^HTTP:")
 
                       if echo "$BODY" | grep -q "already exists\|409"; then
-                        echo "✅ Harness Code repo already exists — skipping creation"
+                        echo "✅ Repo already exists — skipping"
                       elif [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
                         echo "✅ Harness Code repo created: $SERVICE_NAME"
+                        echo "   URL: https://app.harness.io/ng/account/$ACCOUNT/module/code/orgs/$ORG/repos/$PROJ_ID/$SERVICE_NAME"
                       else
-                        echo "❌ Failed to create Harness Code repo (HTTP $HTTP_CODE)"
-                        echo "$BODY"
-                        exit 1
+                        echo "❌ Failed to create repo (HTTP $HTTP_CODE)"; echo "$BODY"; exit 1
                       fi
 
-              - step:
-                  name: Mirror GitHub Repo to Harness Code
-                  identifier: mirror_github_repo
-                  type: Run
-                  timeout: 15m
-                  spec:
-                    shell: Sh
-                    command: |
-                      set -e
-                      apk add --no-cache git
-
-                      KEY=<+secrets.getValue("harness_api_key")>
-                      GH_TOKEN=<+secrets.getValue("diego-token")>
-                      ACCOUNT="<+account.identifier>"
-                      ORG="<+pipeline.variables.harness_org>"
-                      PROJ_ID="<+pipeline.variables.project_identifier>"
-                      SERVICE_NAME="<+pipeline.variables.service_name>"
-                      GITHUB_URL="<+pipeline.variables.github_repo_url>"
-
-                      echo "==> Mirroring $GITHUB_URL → Harness Code $SERVICE_NAME"
-
-                      # Convert GitHub URL to authenticated form
-                      # e.g. https://github.com/org/repo → https://x-access-token:TOKEN@github.com/org/repo
-                      GITHUB_AUTH_URL=$(echo "$GITHUB_URL" | sed "s|https://|https://x-access-token:${GH_TOKEN}@|")
-
-                      # Mirror clone from GitHub
-                      git clone --mirror "$GITHUB_AUTH_URL" /tmp/mirror-repo
-                      cd /tmp/mirror-repo
-
-                      # Set git config
-                      git config --global user.email "ci-bot@harness.io"
-                      git config --global user.name "Harness Setup"
-                      git config --global --add safe.directory '*'
-
-                      # Push mirror to Harness Code
-                      HARNESS_REPO_URL="https://x-token-auth:${KEY}@app.harness.io/code/git/${ACCOUNT}/${ORG}/${PROJ_ID}/${SERVICE_NAME}.git"
-
-                      git remote set-url origin "$HARNESS_REPO_URL"
-                      git push --mirror
-
-                      echo "✅ Repo mirrored to Harness Code: $ACCOUNT/$ORG/$PROJ_ID/$SERVICE_NAME"
-
     # ─────────────────────────────────────────────────────────────
-    # Stage 3 — Create Harness Service + monorepo_ci Pipeline
+    # Stage 3 — Create Harness Service + CI Pipeline
     # ─────────────────────────────────────────────────────────────
     - stage:
         name: Harness Resources
@@ -321,42 +269,39 @@ pipeline:
                       ACCOUNT="<+account.identifier>"
                       ORG="<+pipeline.variables.harness_org>"
                       PROJ_ID="<+pipeline.variables.project_identifier>"
+                      APP_NAME="<+pipeline.variables.app_name>"
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
                       SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
 
-                      echo "==> Creating Harness service: $SERVICE_ID in $PROJ_ID"
+                      echo "==> Creating service: $APP_NAME ($SERVICE_ID)"
 
                       RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
                         "https://app.harness.io/ng/api/servicesV2?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
                         -H "x-api-key: $KEY" \
                         -H "Content-Type: application/json" \
                         -d "{
-                          \"name\": \"$SERVICE_NAME\",
+                          \"name\": \"$APP_NAME\",
                           \"identifier\": \"$SERVICE_ID\",
                           \"orgIdentifier\": \"$ORG\",
                           \"projectIdentifier\": \"$PROJ_ID\",
                           \"description\": \"<+pipeline.variables.service_description>\",
-                          \"tags\": {
-                            \"setup\": \"\",
-                            \"service_type\": \"$SERVICE_TYPE\"
-                          }
+                          \"tags\": {\"setup\": \"\", \"service_type\": \"$SERVICE_TYPE\"}
                         }")
 
                       HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
-
                       if echo "$RESP" | grep -q "already exists\|DUPLICATE\|409"; then
-                        echo "✅ Service already exists — skipping"
+                        echo "✅ Service already exists"
                       elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
-                        echo "✅ Service created: $SERVICE_ID"
+                        echo "✅ Service created: $APP_NAME"
                       else
-                        echo "⚠️  Service creation HTTP $HTTP_CODE (non-blocking)"
+                        echo "⚠️  Service HTTP $HTTP_CODE (non-blocking)"
                         echo "$RESP" | grep -v "HTTP:" | head -3
                       fi
 
               - step:
-                  name: Create monorepo_ci Pipeline in New Project
-                  identifier: create_monorepo_pipeline
+                  name: Create CI Pipeline
+                  identifier: create_ci_pipeline
                   type: Run
                   timeout: 10m
                   spec:
@@ -367,33 +312,36 @@ pipeline:
                       ACCOUNT="<+account.identifier>"
                       ORG="<+pipeline.variables.harness_org>"
                       PROJ_ID="<+pipeline.variables.project_identifier>"
+                      APP_NAME="<+pipeline.variables.app_name>"
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
                       SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
                       COVERAGE="<+pipeline.variables.coverage_threshold>"
+                      GITHUB_ORG="<+pipeline.variables.github_org>"
 
-                      echo "==> Creating monorepo_ci pipeline in project $PROJ_ID"
+                      echo "==> Creating pipeline: $APP_NAME CI in $PROJ_ID"
 
-                      # Build the pipeline YAML using the monorepo_ci template
-                      # We create a standalone pipeline that mirrors the TPM/Diego monorepo_ci
-                      PIPE_YAML=$(cat <<PIPEYAML
-                      pipeline:
-                        name: ${SERVICE_NAME}-ci
+                      PIPE_YAML="pipeline:
+                        name: $APP_NAME CI
                         identifier: ${SERVICE_ID}_ci
                         projectIdentifier: $PROJ_ID
                         orgIdentifier: $ORG
                         tags:
-                          setup: ""
+                          setup: \"\"
+                          app: \"$(echo $APP_NAME | tr ' ' '_' | tr '[:upper:]' '[:lower:]')\"
                         variables:
+                          - name: app_name
+                            type: String
+                            value: $APP_NAME
                           - name: service_name
                             type: String
                             value: $SERVICE_NAME
                           - name: service_type
                             type: String
                             value: $SERVICE_TYPE
-                          - name: sonar_project_key
+                          - name: coverage_threshold
                             type: String
-                            value: $SERVICE_NAME
+                            value: \"$COVERAGE\"
                           - name: image_name_api
                             type: String
                             value: ${SERVICE_NAME}-api
@@ -415,19 +363,16 @@ pipeline:
                           - name: openapi_file
                             type: String
                             value: catalog/${SERVICE_NAME}-openapi.yaml
-                          - name: coverage_threshold
-                            type: String
-                            value: "$COVERAGE"
                           - name: is_harness_code_repo
                             type: String
-                            value: "true"
-                          - name: connector_ref
+                            value: \"false\"
+                          - name: github_org
                             type: String
-                            value: account.HarnessCode_${PROJ_ID}
+                            value: $GITHUB_ORG
                         properties:
                           ci:
                             codebase:
-                              connectorRef: <+input>
+                              connectorRef: account.DiegoProd
                               repoName: $SERVICE_NAME
                               build: <+input>
                         stages:
@@ -437,7 +382,7 @@ pipeline:
                               type: CI
                               when:
                                 pipelineStatus: Success
-                                condition: <+pipeline.variables.service_type> == "fullstack" || <+pipeline.variables.service_type> == "backend"
+                                condition: <+pipeline.variables.service_type> == \"fullstack\" || <+pipeline.variables.service_type> == \"backend\"
                               spec:
                                 cloneCodebase: true
                                 platform:
@@ -449,47 +394,20 @@ pipeline:
                                 execution:
                                   steps:
                                     - step:
-                                        name: Install Dependencies
-                                        identifier: install_deps
+                                        name: Install and Test
+                                        identifier: install_test
                                         type: Run
                                         spec:
                                           shell: Sh
                                           command: |
-                                            cd backend
-                                            npm ci
-                                    - step:
-                                        name: TypeCheck
-                                        identifier: typecheck
-                                        type: Run
-                                        spec:
-                                          shell: Sh
-                                          command: |
-                                            cd backend
-                                            npx tsc --noEmit
-                                    - step:
-                                        name: Tests & Coverage
-                                        identifier: tests_coverage
-                                        type: Run
-                                        spec:
-                                          shell: Sh
-                                          command: |
-                                            cd backend
-                                            npm test -- --coverage --coverageReporters=json-summary
-                                            COVERAGE=\$(node -e "const s=require('./coverage/coverage-summary.json');console.log(s.total.lines.pct)")
-                                            echo "Coverage: \$COVERAGE%"
-                                            if awk "BEGIN{exit (\$COVERAGE < <+pipeline.variables.coverage_threshold>)}"; then
-                                              echo "✅ Coverage \$COVERAGE% >= <+pipeline.variables.coverage_threshold>%"
-                                            else
-                                              echo "❌ Coverage \$COVERAGE% < <+pipeline.variables.coverage_threshold>%"
-                                              exit 1
-                                            fi
+                                            cd backend && npm ci && npm test -- --coverage
                           - stage:
                               name: Frontend CI
                               identifier: frontend_ci
                               type: CI
                               when:
                                 pipelineStatus: Success
-                                condition: <+pipeline.variables.service_type> == "fullstack" || <+pipeline.variables.service_type> == "frontend"
+                                condition: <+pipeline.variables.service_type> == \"fullstack\" || <+pipeline.variables.service_type> == \"frontend\"
                               spec:
                                 cloneCodebase: true
                                 platform:
@@ -501,25 +419,13 @@ pipeline:
                                 execution:
                                   steps:
                                     - step:
-                                        name: Install Dependencies
-                                        identifier: install_deps_fe
+                                        name: Install and Build
+                                        identifier: install_build
                                         type: Run
                                         spec:
                                           shell: Sh
                                           command: |
-                                            cd frontend
-                                            npm ci
-                                    - step:
-                                        name: Build
-                                        identifier: build_fe
-                                        type: Run
-                                        spec:
-                                          shell: Sh
-                                          command: |
-                                            cd frontend
-                                            npm run build
-                      PIPEYAML
-                      )
+                                            cd frontend && npm ci && npm run build"
 
                       RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
                         "https://app.harness.io/pipeline/api/pipelines?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
@@ -528,18 +434,17 @@ pipeline:
                         --data-binary "$PIPE_YAML")
 
                       HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
-
                       if echo "$RESP" | grep -q "already exists\|DUPLICATE\|409"; then
-                        echo "✅ Pipeline ${SERVICE_ID}_ci already exists — skipping"
+                        echo "✅ Pipeline ${SERVICE_ID}_ci already exists"
                       elif [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
-                        echo "✅ Pipeline ${SERVICE_ID}_ci created in project $PROJ_ID"
+                        echo "✅ Pipeline '$APP_NAME CI' created in $PROJ_ID"
                       else
-                        echo "⚠️  Pipeline creation HTTP $HTTP_CODE (non-blocking)"
+                        echo "⚠️  Pipeline HTTP $HTTP_CODE (non-blocking)"
                         echo "$RESP" | grep -v "HTTP:" | head -5
                       fi
 
     # ─────────────────────────────────────────────────────────────
-    # Stage 4 — Register Catalog Entities in IDP
+    # Stage 4 — Register IDP Catalog Entities
     # ─────────────────────────────────────────────────────────────
     - stage:
         name: Register Catalog
@@ -570,6 +475,7 @@ pipeline:
                       PROJ_ID="<+pipeline.variables.project_identifier>"
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      GITHUB_ORG="<+pipeline.variables.github_org>"
 
                       import_entity() {
                         local FILE_PATH="$1"
@@ -595,7 +501,7 @@ pipeline:
                         if [ "$HTTP_CODE" = "201" ]; then
                           echo "✅ $LABEL registered"
                         elif echo "$BODY" | grep -q "DUPLICATE_FILE_IMPORT"; then
-                          echo "✅ $LABEL already registered — IDP will auto-sync"
+                          echo "✅ $LABEL already registered — IDP will sync"
                         else
                           echo "⚠️  $LABEL → HTTP $HTTP_CODE"
                           echo "$BODY" | head -3
@@ -606,11 +512,11 @@ pipeline:
                         fullstack)
                           import_entity "catalog/$SERVICE_NAME-api.yaml"     "API component"
                           import_entity "catalog/$SERVICE_NAME-web.yaml"     "Web component"
-                          import_entity "catalog/$SERVICE_NAME-openapi.yaml" "OpenAPI entity"
+                          import_entity "catalog/$SERVICE_NAME-openapi.yaml" "OpenAPI spec"
                           ;;
                         backend)
                           import_entity "catalog/$SERVICE_NAME-api.yaml"     "API component"
-                          import_entity "catalog/$SERVICE_NAME-openapi.yaml" "OpenAPI entity"
+                          import_entity "catalog/$SERVICE_NAME-openapi.yaml" "OpenAPI spec"
                           ;;
                         frontend)
                           import_entity "catalog/$SERVICE_NAME-web.yaml"     "Web component"
@@ -621,5 +527,6 @@ pipeline:
                       echo "✅ Project setup complete!"
                       echo "   Project:  https://app.harness.io/ng/account/$ACCOUNT/all/orgs/$ORG/projects/$PROJ_ID"
                       echo "   Repo:     https://app.harness.io/ng/account/$ACCOUNT/module/code/orgs/$ORG/repos/$PROJ_ID/$SERVICE_NAME"
-                      echo "   Pipeline: https://app.harness.io/ng/account/$ACCOUNT/all/orgs/$ORG/projects/$PROJ_ID/pipelines/${SERVICE_NAME//-/_}_ci"
+                      echo "   GitHub:   https://github.com/$GITHUB_ORG/$SERVICE_NAME"
+                      echo "   Pipeline: https://app.harness.io/ng/account/$ACCOUNT/all/orgs/$ORG/projects/$PROJ_ID/pipelines"
                       echo "   Catalog:  https://app.harness.io/ng/account/$ACCOUNT/module/idp/catalog"
