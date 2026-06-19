@@ -101,28 +101,6 @@ pipeline:
                       elif [ "$HTTP" = "404" ]; then echo "Service not found (already gone): $SERVICE_ID"
                       else echo "Delete service HTTP $HTTP: $(cat /tmp/ds.txt | head -c 200)"
                       fi
-              - step:
-                  name: Delete HAR Registry
-                  identifier: delete_har_registry
-                  type: Run
-                  timeout: 5m
-                  spec:
-                    shell: Sh
-                    command: |-
-                      KEY=<+secrets.getValue("account.harness_api_key")>
-                      ACCOUNT="<+account.identifier>"
-                      ORG="<+pipeline.variables.harness_org>"
-                      PROJ_ID="<+pipeline.variables.project_identifier>"
-                      SPACE_REF="${ACCOUNT}/${ORG}/${PROJ_ID}"
-
-                      REG_REF="${ACCOUNT}/${ORG}/${PROJ_ID}/${PROJ_ID}"
-                      HTTP=$(curl -s -o /tmp/dhar.txt -w "%{http_code}" -X DELETE \
-                        "https://app.harness.io/har/api/v1/registry/${REG_REF}" \
-                        -H "x-api-key: $KEY")
-                      if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deleted HAR registry: $PROJ_ID"
-                      elif [ "$HTTP" = "404" ]; then echo "HAR registry not found (already gone): $PROJ_ID"
-                      else echo "Delete HAR HTTP $HTTP: $(cat /tmp/dhar.txt | head -c 200)"
-                      fi
     - stage:
         name: Cleanup IDP Catalog
         identifier: cleanup_idp_stage
@@ -225,6 +203,62 @@ pipeline:
         when:
           pipelineStatus: All
     - stage:
+        name: Delete HAR Registry
+        identifier: delete_har_stage
+        type: CI
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Delete HAR Registry
+                  identifier: delete_har_registry
+                  type: Run
+                  timeout: 5m
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJ_ID="<+pipeline.variables.project_identifier>"
+                      REG_REF="${ACCOUNT}/${ORG}/${PROJ_ID}/${PROJ_ID}"
+
+                      # HAR namespace is account-global — registry may be anchored under a different org.
+                      # Try the expected path first; if 404, probe known orgs (Admin, LAB, default).
+                      del_har() {
+                        local REF="$1"
+                        HTTP=$(curl -s -o /tmp/dhar.txt -w "%{http_code}" -X DELETE \
+                          "https://app.harness.io/har/api/v1/registry/${REF}" \
+                          -H "x-api-key: $KEY")
+                        echo -n "  DELETE ${REF}: HTTP=$HTTP"
+                        if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo " OK"; return 0
+                        elif [ "$HTTP" = "404" ]; then echo " (not found)"; return 1
+                        else echo " ERR: $(cat /tmp/dhar.txt | head -c 100)"; return 2
+                        fi
+                      }
+
+                      # Try primary path
+                      del_har "${REG_REF}" && exit 0
+
+                      # Probe alternate orgs in case the registry is anchored elsewhere
+                      for ALT_ORG in Admin LAB default; do
+                        [ "$ALT_ORG" = "$ORG" ] && continue
+                        del_har "${ACCOUNT}/${ALT_ORG}/${PROJ_ID}/${PROJ_ID}" && exit 0
+                      done
+
+                      # Nothing found — treat as already gone
+                      echo "HAR registry not found in any org (already cleaned up): $PROJ_ID"
+                      exit 0
+        when:
+          pipelineStatus: All
+    - stage:
         name: Delete Project
         identifier: delete_project_stage
         type: CI
@@ -265,6 +299,5 @@ pipeline:
   properties:
     ci:
       codebase:
-        connectorRef: account.HarnessCode
         repoName: <service_name>
         build: <+input>

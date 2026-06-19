@@ -365,11 +365,16 @@ pipeline:
                       if [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then
                         echo "CREATED"
                       elif [ "$RESP" = "409" ] || grep -qi "already exists\|DUPLICATE\|already_exists\|already defined" /tmp/hr.txt 2>/dev/null; then
-                        # Registry may be orphaned (project deleted but HAR backend still has it).
-                        # DELETE the ghost entry and recreate.
-                        echo "EXISTS (409) — purging orphaned registry and recreating..."
+                        # Registry may be orphaned (HAR namespace is account-global — the registry can be
+                        # anchored under a different org/project than the current one).
+                        # Parse the actual owner path from the 409 error body, e.g.:
+                        #   "already defined under 'ACCOUNT/ORG/PROJECT'"
+                        echo "EXISTS (409) — extracting actual owner and purging..."
+                        OWNER_REF=$(grep -o "under '[^']*'" /tmp/hr.txt | grep -o "'[^']*'" | tr -d "'" | head -1)
+                        [ -z "$OWNER_REF" ] && OWNER_REF="${ACCOUNT}/${ORG}/${PROJ_ID}"
+                        echo "  Owner: $OWNER_REF — deleting ${OWNER_REF}/${REG_ID}"
                         DEL_HTTP=$(curl -s -o /tmp/hr_del.txt -w "%{http_code}" -X DELETE \
-                          "https://app.harness.io/har/api/v1/registry/${ACCOUNT}/${ORG}/${PROJ_ID}/${REG_ID}" \
+                          "https://app.harness.io/har/api/v1/registry/${OWNER_REF}/${REG_ID}" \
                           -H "x-api-key: $KEY")
                         echo "  DELETE HTTP=$DEL_HTTP: $(cat /tmp/hr_del.txt | head -c 100)"
                         sleep 3
