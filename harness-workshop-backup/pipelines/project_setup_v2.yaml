@@ -174,9 +174,9 @@ pipeline:
                   type: Run
                   timeout: 20m
                   spec:
-                    shell: Sh
+                    shell: Bash
                     command: |-
-                      set -e
+                      set -euo pipefail
                       apt-get update -qq && apt-get install -y -qq python3 python3-pip git curl jq 2>/dev/null
                       pip3 install --quiet --no-cache-dir cookiecutter
 
@@ -187,9 +187,8 @@ pipeline:
                       HARNESS_PROJECT="<+pipeline.variables.project_identifier>"
                       COVERAGE_THRESHOLD="<+pipeline.variables.coverage_threshold>"
                       ADMIN_EMAIL="<+pipeline.variables.admin_email>"
-                      GH_TOKEN=<+secrets.getValue("diego-token")>
 
-                      TEMPLATE_URL="https://${GH_TOKEN}@github.com/diegopereiraeng/cookiecutter-harness-service.git"
+                      TEMPLATE_URL="https://github.com/diegopereiraeng/cookiecutter-harness-service.git"
                       TEMPLATE_DIR="/tmp/cookiecutter-harness-service"
 
                       echo "==> Cloning cookiecutter template..."
@@ -240,9 +239,9 @@ pipeline:
                   type: Run
                   timeout: 10m
                   spec:
-                    shell: Sh
+                    shell: Bash
                     command: |-
-                      set -e
+                      set -euo pipefail
                       KEY=<+secrets.getValue("account.harness_api_key")>
                       ACCOUNT="<+account.identifier>"
                       ORG="<+pipeline.variables.harness_org>"
@@ -354,14 +353,32 @@ pipeline:
                       REG_ID="${PROJ_ID}"
                       REG_NAME="${APP_NAME}"
 
+                      create_har() {
+                        curl -s -o /tmp/hr.txt -w "%{http_code}" -X POST \
+                          "https://app.harness.io/har/api/v1/registry?space_ref=${SPACE_REF}" \
+                          -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+                          -d "{\"identifier\":\"${REG_ID}\",\"name\":\"${REG_NAME}\",\"packageType\":\"DOCKER\",\"type\":\"VIRTUAL\",\"parentRef\":\"${SPACE_REF}\",\"config\":{\"type\":\"VIRTUAL\"}}"
+                      }
+
                       echo -n "HAR registry $REG_ID: "
-                      RESP=$(curl -s -o /tmp/hr.txt -w "%{http_code}" -X POST \
-                        "https://app.harness.io/har/api/v1/registry?space_ref=${SPACE_REF}" \
-                        -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-                        -d "{\"identifier\":\"${REG_ID}\",\"name\":\"${REG_NAME}\",\"packageType\":\"DOCKER\",\"type\":\"VIRTUAL\",\"parentRef\":\"${SPACE_REF}\",\"config\":{\"type\":\"VIRTUAL\"}}")
-                      if [ "$RESP" = "409" ] || grep -qi "already exists\|DUPLICATE\|already_exists\|already defined" /tmp/hr.txt 2>/dev/null; then echo "EXISTS"
-                      elif [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then echo "CREATED"
-                      else echo "FAIL HTTP=$RESP: $(head -c 300 /tmp/hr.txt)"; exit 1
+                      RESP=$(create_har)
+                      if [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then
+                        echo "CREATED"
+                      elif [ "$RESP" = "409" ] || grep -qi "already exists\|DUPLICATE\|already_exists\|already defined" /tmp/hr.txt 2>/dev/null; then
+                        # Registry may be orphaned (project deleted but HAR backend still has it).
+                        # DELETE the ghost entry and recreate.
+                        echo "EXISTS (409) — purging orphaned registry and recreating..."
+                        DEL_HTTP=$(curl -s -o /tmp/hr_del.txt -w "%{http_code}" -X DELETE \
+                          "https://app.harness.io/har/api/v1/registry/${ACCOUNT}/${ORG}/${PROJ_ID}/${REG_ID}" \
+                          -H "x-api-key: $KEY")
+                        echo "  DELETE HTTP=$DEL_HTTP: $(cat /tmp/hr_del.txt | head -c 100)"
+                        sleep 3
+                        RESP2=$(create_har)
+                        if [ "$RESP2" = "200" ] || [ "$RESP2" = "201" ]; then echo "RECREATED"
+                        else echo "FAIL after purge+recreate HTTP=$RESP2: $(head -c 300 /tmp/hr.txt)"; exit 1
+                        fi
+                      else
+                        echo "FAIL HTTP=$RESP: $(head -c 300 /tmp/hr.txt)"; exit 1
                       fi
               - step:
                   name: Create CI Pipeline
@@ -475,7 +492,6 @@ pipeline:
                         properties:
                           ci:
                             codebase:
-                              connectorRef: account.HarnessCode
                               repoName: ${SERVICE_NAME}
                               build: ${INP}
                       PIPEEOF
@@ -594,7 +610,7 @@ pipeline:
                         RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
                           "https://app.harness.io/v1/entities/import?orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
                           -H "Content-Type: application/json" -H "Harness-Account: $ACCOUNT" -H "x-api-key: $KEY" \
-                          -d "{\"connector_ref\": \"account.HarnessCode\", \"repo_name\": \"$SERVICE_NAME\", \"branch_name\": \"main\", \"file_path\": \"$FILE_PATH\", \"is_harness_code_repo\": true}")
+                          -d "{\"repo_name\": \"$SERVICE_NAME\", \"branch_name\": \"main\", \"file_path\": \"$FILE_PATH\", \"is_harness_code_repo\": true}")
                         HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
                         BODY=$(echo "$RESP" | grep -v "^HTTP:")
                         if [ "$HTTP_CODE" = "201" ]; then echo "$LABEL registered"
@@ -611,6 +627,5 @@ pipeline:
   properties:
     ci:
       codebase:
-        connectorRef: account.HarnessCode
         repoName: <service_name>
         build: <+input>
