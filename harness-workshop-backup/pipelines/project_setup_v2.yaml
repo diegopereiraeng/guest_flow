@@ -219,20 +219,31 @@ pipeline:
                         "/harness/$SERVICE_NAME/backend/package.json" \
                         "/harness/$SERVICE_NAME/package.json"; do
                         [ -f "$PKG_FILE" ] || continue
-                        jq -e '.scripts["test:ci"]' "$PKG_FILE" > /dev/null 2>&1 && { echo "test:ci already in $PKG_FILE (skipping)"; continue; }
-                        echo "==> Patching test:ci into $PKG_FILE"
+                        echo "==> Checking $PKG_FILE"
+                        # Detect project type
+                        IS_VITE=$(jq -r 'if ((.devDependencies["vite"] // .devDependencies["@vitejs/plugin-react"]) != null) then "true" else "false" end' "$PKG_FILE")
+                        if [ "$IS_VITE" = "true" ]; then
+                          # Vite project: vitest is already installed — switch test:ci to use it with JUnit output
+                          # This avoids needing to add jest + ts-jest + babel to a Vite project
+                          jq '.scripts["test:ci"] = "npx vitest run --reporter=junit --outputFile=test-results/junit.xml" | .devDependencies["jsdom"] = "^24.0.0" | .devDependencies["@vitest/coverage-v8"] = "^2.0.0"' \
+                            "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
+                          echo "  Patched test:ci => vitest + jsdom (vite project): $PKG_FILE"
+                          continue
+                        fi
+                        # Non-Vite (Node/Express backend): use jest.
+                        # Skip only if BOTH test:ci AND jest binary already present.
+                        HAS_TEST_CI=$(jq -e '.scripts["test:ci"]' "$PKG_FILE" > /dev/null 2>&1 && echo true || echo false)
+                        HAS_JEST=$(jq -e '.devDependencies["jest"]' "$PKG_FILE" > /dev/null 2>&1 && echo true || echo false)
+                        [ "$HAS_TEST_CI" = "true" ] && [ "$HAS_JEST" = "true" ] && { echo "  test:ci + jest already in $PKG_FILE (skipping)"; continue; }
                         IS_REACT=$(jq -r 'if ((.dependencies["react-scripts"] // .devDependencies["react-scripts"]) != null) then "true" else "false" end' "$PKG_FILE")
                         if [ "$IS_REACT" = "true" ]; then
                           TEST_CMD="react-scripts test --watchAll=false --ci --reporters=default --reporters=jest-junit"
-                        else
-                          TEST_CMD="jest --ci --reporters=default --reporters=jest-junit --passWithNoTests"
-                        fi
-                        if [ "$IS_REACT" = "true" ]; then
                           jq --arg cmd "$TEST_CMD" \
                             '.scripts["test:ci"] = $cmd | .devDependencies["jest-junit"] = "^16.0.0" | .["jest-junit"] = {"outputDirectory": "test-results", "outputName": "junit.xml"}' \
                             "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                         else
-                          # Non-React (Vite/Node): add jest + ts-jest + jest-junit so 'npm ci' installs them
+                          # Node/Express backend: add jest + ts-jest + jest-junit so 'npm ci' installs them
+                          TEST_CMD="jest --ci --reporters=default --reporters=jest-junit --passWithNoTests"
                           jq --arg cmd "$TEST_CMD" \
                             '.scripts["test:ci"] = $cmd |
                              .devDependencies["jest"] = "^29.7.0" |
@@ -244,7 +255,19 @@ pipeline:
                              .["jest"] = {"preset": "ts-jest/legacy", "testEnvironment": "node", "testMatch": ["**/?(*.)+(spec|test).[jt]s?(x)"], "passWithNoTests": true}' \
                             "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                         fi
-                        echo "Patched: $PKG_FILE | react=$IS_REACT"
+                        # If jest.config.ts (or .js/.cjs) already exists, remove the inline 'jest' key
+                        # from package.json to avoid "multiple configurations found" error
+                        PKG_DIR=$(dirname "$PKG_FILE")
+                        if ls "$PKG_DIR"/jest.config.{ts,js,cjs,mjs} 2>/dev/null | grep -q .; then
+                          jq 'del(.jest)' "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
+                          echo "  Removed inline jest config from $PKG_FILE (jest.config.* exists)"
+                        fi
+                        # Also add @types/swagger-jsdoc if swagger-jsdoc is a dependency
+                        if jq -e '.dependencies["swagger-jsdoc"] // .devDependencies["swagger-jsdoc"]' "$PKG_FILE" > /dev/null 2>&1; then
+                          jq '.devDependencies["@types/swagger-jsdoc"] = "^6.0.4"' "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
+                          echo "  Added @types/swagger-jsdoc to $PKG_FILE"
+                        fi
+                        echo "  Patched: $PKG_FILE | vite=$IS_VITE react=$IS_REACT"
                       done
                       echo "==> package.json patch complete"
 
@@ -260,8 +283,23 @@ pipeline:
                         [ -f "$TSC_FILE" ] || continue
                         sed -i 's/"noUnusedLocals": true/"noUnusedLocals": false/g' "$TSC_FILE"
                         sed -i 's/"noUnusedParameters": true/"noUnusedParameters": false/g' "$TSC_FILE"
-                        echo "  Patched noUnusedLocals/Params in $TSC_FILE"
+                        # Fix TS2686: 'React' refers to a UMD global — happens when jsx:react (old transform)
+                        # is combined with no 'import React' (we removed those above). Switch to react-jsx
+                        # (React 17+ new JSX transform) so React does not need to be in scope.
+                        sed -i 's/"jsx": "react"/"jsx": "react-jsx"/g' "$TSC_FILE"
+                        echo "  Patched noUnusedLocals/Params + jsx:react-jsx in $TSC_FILE"
                       done
+                      # Fix main.tsx: if it uses React.StrictMode directly, replace with named import
+                      # (react-jsx transform covers JSX syntax but NOT direct React.* API calls)
+                      MAIN_TSX="/harness/$SERVICE_NAME/frontend/src/main.tsx"
+                      if [ -f "$MAIN_TSX" ] && grep -q "React\.StrictMode" "$MAIN_TSX"; then
+                        sed -i 's/<React\.StrictMode>/<StrictMode>/g; s/<\/React\.StrictMode>/<\/StrictMode>/g' "$MAIN_TSX"
+                        # Add StrictMode named import if not already present
+                        if ! grep -qE "import.*StrictMode.*from .react." "$MAIN_TSX"; then
+                          sed -i "1s/^/import { StrictMode } from 'react'\n/" "$MAIN_TSX"
+                        fi
+                        echo "  Fixed main.tsx: React.StrictMode -> StrictMode (named import)"
+                      fi
                       find "/harness/$SERVICE_NAME/frontend/src" -name "*.tsx" -o -name "*.jsx" 2>/dev/null | while read F; do
                         if grep -q "^import React from ['\"]react['\"]" "$F"; then
                           sed -i "/^import React from ['\"]react['\"];*$/d" "$F"
@@ -408,6 +446,7 @@ pipeline:
                       SPACE_REF="${ACCOUNT}/${ORG}/${PROJ_ID}"
                       REG_ID="${PROJ_ID}"
                       REG_NAME="${APP_NAME}"
+                      ACCOUNT_LOWER=$(echo "$ACCOUNT" | tr '[:upper:]' '[:lower:]')
 
                       create_har() {
                         curl -s -o /tmp/hr.txt -w "%{http_code}" -X POST \
@@ -467,6 +506,31 @@ pipeline:
                       else
                         echo "FAIL HTTP=$RESP: $(head -c 300 /tmp/hr.txt)"; exit 1
                       fi
+                      # Create DockerRegistry connector with same identifier as HAR registry.
+                      # BuildAndPushDockerRegistry in the CI template uses registryRef: {PROJ_ID} which must
+                      # resolve to a connector. This connector points to pkg.harness.io so the push URL
+                      # becomes pkg.harness.io/{accountLower}/{registryId}/{imageName}:{tag}.
+                      CONN_JSON="{\"connector\":{\"name\":\"${REG_NAME}\",\"identifier\":\"${REG_ID}\",\"orgIdentifier\":\"${ORG}\",\"projectIdentifier\":\"${PROJ_ID}\",\"type\":\"DockerRegistry\",\"spec\":{\"dockerRegistryUrl\":\"https://pkg.harness.io/${ACCOUNT_LOWER}/${REG_ID}\",\"providerType\":\"DockerHub\",\"executeOnDelegate\":false,\"auth\":{\"type\":\"UsernamePassword\",\"spec\":{\"username\":\"harness_pat\",\"passwordRef\":\"account.harness_api_key\"}}}}}"
+                      CONN_HTTP=$(curl -s -o /tmp/conn.txt -w "%{http_code}" -X POST \
+                        "https://app.harness.io/ng/api/connectors?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
+                        -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+                        -d "$CONN_JSON")
+                      if echo "$CONN_HTTP" | grep -qE "^20"; then
+                        echo "HAR DockerRegistry connector created: $REG_ID"
+                      elif grep -qi "already exists\|DUPLICATE\|already_exists\|already defined" /tmp/conn.txt 2>/dev/null; then
+                        echo "HAR DockerRegistry connector already exists: $REG_ID — updating URL to ensure correctness"
+                        UPD_HTTP=$(curl -s -o /tmp/conn_upd.txt -w "%{http_code}" -X PUT \
+                          "https://app.harness.io/ng/api/connectors?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
+                          -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+                          -d "$CONN_JSON")
+                        if echo "$UPD_HTTP" | grep -qE "^20"; then
+                          echo "HAR DockerRegistry connector updated: $REG_ID"
+                        else
+                          echo "WARNING: HAR connector update HTTP=$UPD_HTTP: $(head -c 300 /tmp/conn_upd.txt)"
+                        fi
+                      else
+                        echo "WARNING: HAR connector create HTTP=$CONN_HTTP: $(head -c 300 /tmp/conn.txt)"
+                      fi
               - step:
                   name: Create CI Pipeline
                   identifier: create_ci_pipeline
@@ -484,6 +548,10 @@ pipeline:
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
                       SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
+                      # Lowercase account ID — HAR push URL format: pkg.harness.io/{accountLower}/{registryId}/{imageName}
+                      ACCOUNT_LOWER=$(echo "$ACCOUNT" | tr '[:upper:]' '[:lower:]')
+                      # HAR registry ID matches project ID (set in create_har_registry step)
+                      REG_ID="${PROJ_ID}"
 
                       LT='<' PL='+' GT='>'
                       INP="${LT}${PL}input${GT}"
