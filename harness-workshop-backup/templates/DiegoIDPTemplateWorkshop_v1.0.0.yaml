@@ -1,0 +1,233 @@
+template:
+  name: DiegoIDPTemplateWorkshop
+  identifier: DiegoIDPTemplateWorkshop
+  versionLabel: 1.0.0
+  type: Stage
+  # scope: account  — create at account level in sandbox
+  spec:
+    type: IDP
+    variables:
+      - name: CATALOG_ENTITY
+        type: String
+        value: <+input>
+      - name: CI_STAGE_ID
+        type: String
+        value: <+input>
+      - name: CATALOG_FILE
+        type: String
+        value: <+input>
+      - name: OPENAPI_FILE
+        type: String
+        value: <+input>
+    spec:
+      cloneCodebase: false
+      platform:
+        os: Linux
+        arch: Amd64
+      runtime:
+        type: Cloud
+        spec: {}
+      execution:
+        steps:
+          - step:
+              type: Run
+              name: register_component
+              identifier: register_component
+              spec:
+                shell: Sh
+                command: |-
+                  KEY=<+secrets.getValue("account.harness_api_key")>
+                  ACCOUNT="<+account.identifier>"
+
+                  RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
+                    "https://app.harness.io/v1/entities/import?orgIdentifier=TPM&projectIdentifier=Diego" \
+                    -H "Content-Type: application/json" \
+                    -H "Harness-Account: $ACCOUNT" \
+                    -H "x-api-key: $KEY" \
+                    -d "{
+                      \"connector_ref\": \"DiegoGit\",
+                      \"repo_name\": \"<+pipeline.properties.ci.codebase.repoName>\",
+                      \"branch_name\": \"main\",
+                      \"file_path\": \"<+stage.variables.CATALOG_FILE>\",
+                      \"is_harness_code_repo\": false
+                    }")
+
+                  HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+                  BODY=$(echo "$RESP" | grep -v "^HTTP:")
+
+                  echo "HTTP: $HTTP_CODE"
+                  echo "$BODY"
+
+                  if [ "$HTTP_CODE" = "201" ]; then
+                    echo "Entity registered successfully"
+                  elif echo "$BODY" | grep -q "DUPLICATE_FILE_IMPORT"; then
+                    echo "Entity already registered — IDP will auto-sync from Git"
+                  else
+                    echo "Unexpected error (HTTP $HTTP_CODE)"
+                    exit 1
+                  fi
+          - parallel:
+              - step:
+                  type: Run
+                  name: register_openapi
+                  identifier: register_openapi
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+
+                      RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
+                        "https://app.harness.io/v1/entities/import?orgIdentifier=TPM&projectIdentifier=Diego" \
+                        -H "Content-Type: application/json" \
+                        -H "Harness-Account: $ACCOUNT" \
+                        -H "x-api-key: $KEY" \
+                        -d "{
+                          \"connector_ref\": \"DiegoGit\",
+                          \"repo_name\": \"<+pipeline.properties.ci.codebase.repoName>\",
+                          \"branch_name\": \"main\",
+                          \"file_path\": \"<+stage.variables.OPENAPI_FILE>\",
+                          \"is_harness_code_repo\": false
+                        }")
+
+                      HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+                      BODY=$(echo "$RESP" | grep -v "^HTTP:")
+
+                      echo "HTTP: $HTTP_CODE"
+                      echo "$BODY"
+
+                      if [ "$HTTP_CODE" = "201" ]; then
+                        echo "Entity registered successfully"
+                      elif echo "$BODY" | grep -q "DUPLICATE_FILE_IMPORT"; then
+                        echo "Entity already registered — IDP will auto-sync from Git"
+                      else
+                        echo "Unexpected error (HTTP $HTTP_CODE)"
+                        exit 1
+                      fi
+                  when:
+                    stageStatus: Success
+                    condition: <+stage.variables.OPENAPI_FILE> != "" && <+stage.variables.OPENAPI_FILE> != "skip"
+              - step:
+                  type: Run
+                  name: catalog_ingestion
+                  identifier: catalog_ingestion
+                  spec:
+                    shell: Bash
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+                      safe() { local v="$1"; [ -z "$v" ] || [ "$v" = "null" ] && echo "$2" || echo "$v"; }
+                      bool_pass() { [ "$(safe "$1" "FAIL")" = "PASS" ] && echo true || echo false; }
+                      bool_zero() { [ "$(safe "$1" "1")" -eq 0 ] 2>/dev/null && echo true || echo false; }
+
+                      TRIGGERED_BY=<+pipeline.triggeredBy.email>
+                      TRIGGERED_BY_VAL=$(safe "$TRIGGERED_BY" "unknown")
+
+                      # --- CI stage output vars ---
+                      COVERAGE_STATUS="<+pipeline.stages.ci_stage.spec.execution.steps.test.steps.coverage_gate.output.outputVariables.COVERAGE_STATUS>"
+                      TYPECHECK_STATUS="<+pipeline.stages.ci_stage.spec.execution.steps.quality.steps.typecheck.output.outputVariables.TYPECHECK_STATUS>"
+                      SONAR_GATE="<+pipeline.stages.ci_stage.spec.execution.steps.sonarqube.steps.sonar_scan.output.outputVariables.SONAR_QUALITY_GATE>"
+                      SECRETS_CRIT="<+pipeline.stages.ci_stage.spec.execution.steps.secrets_scan_group.steps.gitleaks_scan.output.outputVariables.CRITICAL>"
+                      SAST_CRIT="<+pipeline.stages.ci_stage.spec.execution.steps.security_sast.steps.semgrep_scan.output.outputVariables.CRITICAL>"
+                      SCA_CRIT="<+pipeline.stages.ci_stage.spec.execution.steps.security_sca.steps.grype_sca.output.outputVariables.CRITICAL>"
+                      SCA_HIGH="<+pipeline.stages.ci_stage.spec.execution.steps.security_sca.steps.grype_sca.output.outputVariables.HIGH>"
+                      CONTAINER_CRIT="<+pipeline.stages.ci_stage.spec.execution.steps.security_container.steps.trivy_scan.output.outputVariables.CRITICAL>"
+                      DEPS_STATUS="<+pipeline.stages.ci_stage.spec.execution.steps.dependency_audit_group.steps.dependency_audit.output.outputVariables.DEPS_STATUS>"
+                      LICENSE_STATUS="<+pipeline.stages.ci_stage.spec.execution.steps.dependency_audit_group.steps.dependency_audit.output.outputVariables.LICENSE_STATUS>"
+                      COVERAGE_PCT="<+pipeline.stages.ci_stage.spec.execution.steps.test.steps.coverage_gate.output.outputVariables.COVERAGE_PCT>"
+                      LICENSE_ERRORS="<+pipeline.stages.ci_stage.spec.execution.steps.dependency_audit_group.steps.dependency_audit.output.outputVariables.LICENSE_ERRORS>"
+
+                      # --- pipeline context ---
+                      SONAR_URL="https://sonarcloud.io/project/overview?id=<+stage.variables.SONAR_PROJECT_KEY>"
+                      LAST_BUILD_URL="<+pipeline.executionUrl>"
+                      PIPELINE_STATUS="<+pipeline.status>"
+                      PIPELINE_SEQ="<+pipeline.sequenceId>"
+                      PIPELINE_EXEC_ID="<+pipeline.executionId>"
+
+                      # --- booleans ---
+                      COVERAGE_PASSED=$(bool_pass "$COVERAGE_STATUS")
+                      TYPECHECK_PASSED=$(bool_pass "$TYPECHECK_STATUS")
+                      SONAR_PASSED=$([ "$(safe "$SONAR_GATE" "")" = "OK" ] && echo true || echo false)
+                      SECRETS_PASSED=$(bool_zero "$SECRETS_CRIT")
+                      SAST_PASSED=$(bool_zero "$SAST_CRIT")
+                      SCA_PASSED=$(bool_zero "$SCA_CRIT")
+                      NO_HIGH_PASSED=$([ "$(safe "$SCA_HIGH" "99")" -le 5 ] 2>/dev/null && echo true || echo false)
+                      CONTAINER_PASSED=$(bool_zero "$CONTAINER_CRIT")
+                      DEPS_PASSED=$(bool_pass "$DEPS_STATUS")
+                      LICENSE_PASSED=$(bool_pass "$LICENSE_STATUS")
+
+                      # --- safe detail values ---
+                      COVERAGE_PCT_VAL=$(safe "$COVERAGE_PCT" "0")
+                      VULN_CRIT_VAL=$(safe "$CONTAINER_CRIT" "0")
+                      VULN_HIGH_VAL=$(safe "$SCA_HIGH" "0")
+                      LICENSE_ERRORS_VAL=$(safe "$LICENSE_ERRORS" "none")
+
+                      # --- display formatters ---
+                      fmt_bool()     { [ "$1" = "true" ] && echo "Pass" || echo "Fail"; }
+                      fmt_critical() { [ "$1" = "0" ] && echo "0" || echo "$1 CRITICAL"; }
+                      fmt_coverage() {
+                        local v="$1" t="${2:-80}"
+                        node -e "process.exitCode = parseFloat('$v') >= parseFloat('$t') ? 0 : 1" 2>/dev/null \
+                          && echo "${v}%" || echo "${v}% (below threshold)"
+                      }
+                      fmt_status()  { [ "$1" = "SUCCESS" ] && echo "SUCCESS" || echo "$1"; }
+                      fmt_license() { [ "$1" = "none" ] && echo "none" || echo "$1"; }
+
+                      DISP_BUILD_STATUS=$(fmt_status "$PIPELINE_STATUS")
+                      DISP_COVERAGE=$(fmt_coverage "$COVERAGE_PCT_VAL" "<+stage.variables.COVERAGE_THRESHOLD>")
+                      DISP_VULN_CRIT=$(fmt_critical "$VULN_CRIT_VAL")
+                      DISP_VULN_HIGH="$VULN_HIGH_VAL"
+                      DISP_LICENSE_ERRORS=$(fmt_license "$LICENSE_ERRORS_VAL")
+                      DISP_COVERAGE_PASSED=$(fmt_bool "$COVERAGE_PASSED")
+                      DISP_TYPECHECK=$(fmt_bool "$TYPECHECK_PASSED")
+                      DISP_SONAR=$(fmt_bool "$SONAR_PASSED")
+                      DISP_SECRETS=$(fmt_bool "$SECRETS_PASSED")
+                      DISP_SAST=$(fmt_bool "$SAST_PASSED")
+                      DISP_SCA=$(fmt_bool "$SCA_PASSED")
+                      DISP_NO_HIGH=$(fmt_bool "$NO_HIGH_PASSED")
+                      DISP_CONTAINER=$(fmt_bool "$CONTAINER_PASSED")
+                      DISP_DEPS=$(fmt_bool "$DEPS_PASSED")
+                      DISP_LICENSE=$(fmt_bool "$LICENSE_PASSED")
+
+                      echo "=== Catalog Ingestion ==="
+                      echo "coverage=$COVERAGE_PASSED ($COVERAGE_PCT_VAL%) typecheck=$TYPECHECK_PASSED sonar=$SONAR_PASSED"
+
+                      RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
+                        "https://app.harness.io/gateway/v1/catalog/custom-properties/entity" \
+                        -H "x-api-key: $KEY" \
+                        -H "Harness-Account: $ACCOUNT" \
+                        -H "Content-Type: application/json" \
+                        -d "{
+                          \"entity_ref\": \"component:account/<+stage.variables.CATALOG_ENTITY>\",
+                          \"properties\": [
+                            {\"property\": \"metadata.scorecards.quality.coveragePassed\",    \"value\": $COVERAGE_PASSED},
+                            {\"property\": \"metadata.scorecards.quality.typecheckPassed\",   \"value\": $TYPECHECK_PASSED},
+                            {\"property\": \"metadata.scorecards.quality.sonarGatePassed\",   \"value\": $SONAR_PASSED},
+                            {\"property\": \"metadata.scorecards.quality.openapiPublished\",  \"value\": true},
+                            {\"property\": \"metadata.scorecards.quality.depsUpToDate\",      \"value\": $DEPS_PASSED},
+                            {\"property\": \"metadata.scorecards.quality.licenseCompliant\",  \"value\": $LICENSE_PASSED},
+                            {\"property\": \"metadata.scorecards.security.noSecretLeaks\",    \"value\": $SECRETS_PASSED},
+                            {\"property\": \"metadata.scorecards.security.sastPassed\",       \"value\": $SAST_PASSED},
+                            {\"property\": \"metadata.scorecards.security.scaPassed\",        \"value\": $SCA_PASSED},
+                            {\"property\": \"metadata.scorecards.security.noHighVulns\",      \"value\": $NO_HIGH_PASSED},
+                            {\"property\": \"metadata.scorecards.security.containerPassed\",  \"value\": $CONTAINER_PASSED},
+                            {\"property\": \"metadata.scorecards.lastEvaluatedAt\",           \"value\": \"$TIMESTAMP\"},
+                            {\"property\": \"metadata.scorecards.pipelineBuild\",             \"value\": \"$PIPELINE_SEQ\"},
+                            {\"property\": \"metadata.build.coveragePct\",                    \"value\": \"$COVERAGE_PCT_VAL\"},
+                            {\"property\": \"metadata.build.vulnCritical\",                   \"value\": \"$VULN_CRIT_VAL\"},
+                            {\"property\": \"metadata.build.vulnHigh\",                       \"value\": \"$VULN_HIGH_VAL\"},
+                            {\"property\": \"metadata.build.licenseErrors\",                  \"value\": \"$LICENSE_ERRORS_VAL\"},
+                            {\"property\": \"metadata.build.lastBuildStatus\",                \"value\": \"$PIPELINE_STATUS\"},
+                            {\"property\": \"metadata.build.lastBuildId\",                    \"value\": \"$PIPELINE_EXEC_ID\"},
+                            {\"property\": \"metadata.build.lastBuildUrl\",                   \"value\": \"$LAST_BUILD_URL\"},
+                            {\"property\": \"metadata.build.sonarUrl\",                       \"value\": \"$SONAR_URL\"},
+                            {\"property\": \"metadata.additionalInfo.lastTriggeredBy\",       \"value\": \"$TRIGGERED_BY_VAL\"}
+                          ]
+                        }")
+
+                      HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+                      echo "HTTP: $HTTP_CODE"
+                      echo "$RESP"
+                      [ "$HTTP_CODE" = "200" ] || exit 1

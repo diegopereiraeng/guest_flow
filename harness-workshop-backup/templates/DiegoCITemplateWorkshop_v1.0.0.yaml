@@ -1,0 +1,393 @@
+template:
+  name: DiegoCITemplateWorkshop
+  identifier: DiegoCITemplateWorkshop
+  versionLabel: 1.0.0
+  type: Stage
+  # scope: account  — create at account level in sandbox
+  spec:
+    type: CI
+    variables:
+      - name: SERVICE_DIR
+        type: String
+        description: Service directory (backend or frontend)
+        value: <+input>
+      - name: IMAGE_NAME
+        type: String
+        description: Docker image name (used as artifact name in HAR)
+        value: <+input>
+      - name: DOCKERFILE
+        type: String
+        description: Path to Dockerfile
+        value: <+input>
+      - name: DOCKER_CONTEXT
+        type: String
+        description: Docker build context
+        value: <+input>
+      - name: GENERATE_OPENAPI
+        type: String
+        description: Set to true to generate OpenAPI spec
+        value: <+input>
+      - name: COVERAGE_THRESHOLD
+        type: String
+        description: Minimum line coverage percentage
+        value: "80"
+      - name: CATALOG_ENTITY
+        type: String
+        description: IDP entity name (underscore form)
+        value: <+input>
+      - name: SONAR_PROJECT_KEY
+        type: String
+        description: SonarQube project key (optional)
+        required: false
+        value: <+input>
+    spec:
+      cloneCodebase: true
+      platform:
+        os: Linux
+        arch: Amd64
+      runtime:
+        type: Cloud
+        spec:
+          size: medium
+      execution:
+        steps:
+          - stepGroup:
+              name: Setup
+              identifier: setup
+              steps:
+                - step:
+                    type: Run
+                    name: install_deps
+                    identifier: install_deps
+                    spec:
+                      image: node:20
+                      shell: Sh
+                      command: cd <+stage.variables.SERVICE_DIR> && npm ci
+                      envVariables:
+                        NODE_ENV: test
+          - stepGroup:
+              name: Quality
+              identifier: quality
+              steps:
+                - step:
+                    type: Run
+                    name: typecheck
+                    identifier: typecheck
+                    spec:
+                      shell: Sh
+                      command: |
+                        cd <+stage.variables.SERVICE_DIR>
+                        if npx tsc --noEmit; then
+                          TYPECHECK_STATUS=PASS
+                        else
+                          TYPECHECK_STATUS=FAIL
+                        fi
+                        echo "TYPECHECK_STATUS=$TYPECHECK_STATUS" >> $HARNESS_OUTPUT_FILE
+                        [ "$TYPECHECK_STATUS" = "PASS" ] || exit 0
+                      outputVariables:
+                        - name: TYPECHECK_STATUS
+                          type: String
+                          value: TYPECHECK_STATUS
+          - stepGroup:
+              name: Secrets Scan
+              identifier: secrets_scan_group
+              steps:
+                - step:
+                    type: Gitleaks
+                    name: gitleaks_scan
+                    identifier: gitleaks_scan
+                    spec:
+                      mode: orchestration
+                      config: default
+                      target:
+                        type: repository
+                        detection: auto
+                      advanced:
+                        log:
+                          level: info
+                        fail_on_severity: critical
+          - stepGroup:
+              name: Test
+              identifier: test
+              steps:
+                - step:
+                    type: Run
+                    name: run_tests
+                    identifier: run_tests
+                    spec:
+                      image: node:20
+                      shell: Bash
+                      command: |
+                        cd <+stage.variables.SERVICE_DIR>
+                        rm -rf test-results coverage
+                        mkdir -p test-results
+                        export NODE_OPTIONS="--experimental-global-webcrypto"
+                        npm run test:ci
+                      reports:
+                        type: JUnit
+                        spec:
+                          paths:
+                            - <+stage.variables.SERVICE_DIR>/test-results/junit.xml
+                      outputVariables:
+                        - name: COVERAGE
+                          type: String
+                          value: COVERAGE
+                - step:
+                    type: Run
+                    name: coverage_gate
+                    identifier: coverage_gate
+                    spec:
+                      shell: Sh
+                      command: |-
+                        cd <+stage.variables.SERVICE_DIR>
+                        if [ -f coverage/coverage-summary.json ]; then
+                          COVERAGE=$(node -e "const j=require('./coverage/coverage-summary.json'); console.log(j.total.lines.pct)")
+                          COVERAGE_PCT=$COVERAGE
+                          echo "Coverage captured: $COVERAGE%"
+                          echo "COVERAGE=$COVERAGE" >> $HARNESS_OUTPUT_FILE
+                          echo "COVERAGE_PCT=$COVERAGE_PCT" >> $HARNESS_OUTPUT_FILE
+                        fi
+                        THRESHOLD=<+stage.variables.COVERAGE_THRESHOLD>
+                        echo "Coverage: ${COVERAGE}% (threshold: ${THRESHOLD}%)"
+                        echo "COVERAGE_PCT=$COVERAGE" >> $HARNESS_OUTPUT_FILE
+                        if node -e "process.exitCode = (parseFloat('${COVERAGE}') < parseFloat('${THRESHOLD}')) ? 1 : 0"; then
+                          COVERAGE_STATUS=PASS
+                        else
+                          COVERAGE_STATUS=FAIL
+                        fi
+                        echo "Coverage result: $COVERAGE_STATUS"
+                        echo "COVERAGE_STATUS=$COVERAGE_STATUS" >> $HARNESS_OUTPUT_FILE
+                        [ "$COVERAGE_STATUS" = "PASS" ] || exit 0
+                      outputVariables:
+                        - name: COVERAGE_STATUS
+                          type: String
+                          value: COVERAGE_STATUS
+                        - name: COVERAGE_PCT
+                          type: String
+                          value: COVERAGE_PCT
+                    when:
+                      stageStatus: Success
+                    failureStrategies:
+                      - onFailure:
+                          errors:
+                            - AllErrors
+                          action:
+                            type: Ignore
+          - stepGroup:
+              name: Dependency Audit
+              identifier: dependency_audit_group
+              steps:
+                - step:
+                    type: Run
+                    name: dependency_audit
+                    identifier: dependency_audit
+                    spec:
+                      image: node:20
+                      shell: Bash
+                      command: |
+                        cd <+stage.variables.SERVICE_DIR>
+                        npm outdated --json 2>/dev/null > /tmp/outdated.json || echo '{}' > /tmp/outdated.json
+                        MAJOR_OUTDATED=$(node -e "
+                          const fs = require('fs');
+                          const o = JSON.parse(fs.readFileSync('/tmp/outdated.json', 'utf8') || '{}');
+                          const n = Object.entries(o).filter(([,v]) => {
+                            const cur = parseInt((v.current||'0').split('.')[0]);
+                            const lat = parseInt((v.latest||'0').split('.')[0]);
+                            return lat > cur;
+                          }).length;
+                          console.log(n);
+                        ")
+                        echo "Major versions outdated: $MAJOR_OUTDATED"
+                        if [ "$MAJOR_OUTDATED" -le 3 ]; then DEPS_STATUS=PASS; else DEPS_STATUS=WARN; fi
+                        echo "DEPS_STATUS=$DEPS_STATUS" >> $HARNESS_OUTPUT_FILE
+                        LICENSE_ERRORS=$(grep -E "UNKNOWN|GPL|AGPL|LGPL" /tmp/license-out.txt | awk '{print $NF}' | head -3 | tr '\n' ',' | sed 's/,$//' || echo "none")
+                        echo "LICENSE_ERRORS=$LICENSE_ERRORS" >> $HARNESS_OUTPUT_FILE
+                        if npx --yes license-checker ...; then LICENSE_STATUS=PASS; else LICENSE_STATUS=FAIL; fi
+                        echo "LICENSE_STATUS=$LICENSE_STATUS" >> $HARNESS_OUTPUT_FILE
+                        [ "$LICENSE_STATUS" = "PASS" ] || exit 0
+                      outputVariables:
+                        - name: DEPS_STATUS
+                          type: String
+                          value: DEPS_STATUS
+                        - name: LICENSE_STATUS
+                          type: String
+                          value: LICENSE_STATUS
+                        - name: LICENSE_ERRORS
+                          type: String
+                          value: LICENSE_ERRORS
+              failureStrategies:
+                - onFailure:
+                    errors:
+                      - AllErrors
+                    action:
+                      type: Ignore
+          - stepGroup:
+              name: SonarQube
+              identifier: sonarqube
+              when:
+                stageStatus: Success
+              steps:
+                - step:
+                    type: Sonarqube
+                    name: sonar_scan
+                    identifier: sonar_scan
+                    spec:
+                      mode: orchestration
+                      config: default
+                      target:
+                        type: repository
+                        detection: auto
+                      advanced:
+                        log:
+                          level: info
+                        args:
+                          cli: "-Dsonar.organization=diegopereiraeng -Dsonar.javascript.lcov.reportPaths=<+stage.variables.SERVICE_DIR>/coverage/lcov.info -Dsonar.typescript.lcov.reportPaths=<+stage.variables.SERVICE_DIR>/coverage/lcov.info -Dsonar.sources=<+stage.variables.SERVICE_DIR>/src -Dsonar.junit.reportPaths=<+stage.variables.SERVICE_DIR>/test-results/junit.xml"
+                      auth:
+                        access_token: <+secrets.getValue("account.sonar_token")>
+                        domain: <+secrets.getValue("account.sonar_host_url")>
+                        ssl: true
+                      tool:
+                        project_key: <+stage.variables.SONAR_PROJECT_KEY>
+                    when:
+                      stageStatus: Success
+          - stepGroup:
+              name: OpenAPI
+              identifier: openapi_group
+              when:
+                stageStatus: Success
+                condition: <+stage.variables.GENERATE_OPENAPI> == "true"
+              steps:
+                - step:
+                    type: Run
+                    name: generate_spec
+                    identifier: generate_spec
+                    spec:
+                      image: node:20
+                      shell: Sh
+                      command: |
+                        cd <+stage.variables.SERVICE_DIR>
+                        APP_VERSION=<+pipeline.sequenceId> GIT_COMMIT=<+codebase.commitSha> npm run generate:spec
+                        npx @stoplight/spectral-cli lint docs/openapi.yaml \
+                          --ruleset https://unpkg.com/@stoplight/spectral-owasp-ruleset/dist/ruleset.mjs \
+                          || echo "Spectral warnings (non-blocking)"
+                - step:
+                    type: Run
+                    name: publish_spec
+                    identifier: publish_spec
+                    spec:
+                      shell: Bash
+                      command: |
+                        set -e
+                        # Harness Code — git credentials auto-configured by CI runner, no NETRC needed
+                        git config --global user.email "ci-bot@harness.io"
+                        git config --global user.name "Harness CI"
+                        git config --global --add safe.directory '*'
+                        git add <+stage.variables.SERVICE_DIR>/docs/openapi.yaml <+stage.variables.SERVICE_DIR>/docs/openapi.json
+                        if git diff --cached --quiet; then
+                          echo "OpenAPI spec unchanged — nothing to commit"
+                        else
+                          git commit -m "chore: update OpenAPI spec for build <+pipeline.sequenceId> [ci skip]"
+                          git push origin HEAD:<+codebase.branch>
+                        fi
+          - stepGroup:
+              name: Security SAST
+              identifier: security_sast
+              steps:
+                - step:
+                    type: Semgrep
+                    name: semgrep_scan
+                    identifier: semgrep_scan
+                    spec:
+                      mode: orchestration
+                      config: auto-only
+                      target:
+                        type: repository
+                        detection: auto
+                      advanced:
+                        log:
+                          level: info
+                        fail_on_severity: none
+                        args:
+                          cli: "--config=p/owasp-top-ten --config=p/nodejs --config=p/typescript"
+          - stepGroup:
+              name: Security SCA
+              identifier: security_sca
+              steps:
+                - step:
+                    type: Grype
+                    name: grype_sca
+                    identifier: grype_sca
+                    spec:
+                      mode: orchestration
+                      config: default
+                      target:
+                        type: repository
+                        workspace: /harness/<+stage.variables.SERVICE_DIR>
+                        name: <+stage.variables.IMAGE_NAME>
+                        variant: <+codebase.branch>
+                      advanced:
+                        log:
+                          level: info
+                        fail_on_severity: none
+                      privileged: true
+          - stepGroup:
+              name: Build and Push HAR
+              identifier: build_push_ecr
+              steps:
+                - step:
+                    type: BuildAndPushDockerRegistry
+                    name: push_har
+                    identifier: push_har
+                    spec:
+                      repo: <+input>
+                      tags:
+                        - latest
+                        - <+pipeline.sequenceId>
+                      caching: true
+                      dockerfile: <+stage.variables.DOCKERFILE>
+                      context: <+stage.variables.DOCKER_CONTEXT>
+                      registryRef: <+input>
+          - stepGroup:
+              name: Security Container
+              identifier: security_container
+              failureStrategies:
+                - onFailure:
+                    errors:
+                      - AllErrors
+                    action:
+                      type: Ignore
+              steps:
+                - step:
+                    type: AquaTrivy
+                    name: trivy_scan
+                    identifier: trivy_scan
+                    spec:
+                      mode: orchestration
+                      config: default
+                      target:
+                        type: container
+                        detection: manual
+                        name: <+stage.variables.IMAGE_NAME>
+                        variant: <+pipeline.sequenceId>
+                      advanced:
+                        log:
+                          level: info
+                        fail_on_severity: none
+                      settings:
+                        docker_mode: without-docker-in-docker
+                      privileged: true
+                      connectorRef: <+input>
+                      image:
+                        type: harness
+                        tag: <+pipeline.sequenceId>
+                        registry: <+input>
+                        image_path: <+stage.variables.IMAGE_NAME>
+                        name: <+stage.variables.IMAGE_NAME>
+          - step:
+              type: Run
+              name: build_manifest
+              identifier: build_manifest
+              spec:
+                shell: Sh
+                command: |
+                  echo "{\"pipeline\":\"<+pipeline.identifier>\",\"build\":\"<+pipeline.sequenceId>\",\"commit\":\"<+codebase.commitSha>\",\"branch\":\"<+codebase.branch>\",\"imageTag\":\"<+pipeline.sequenceId>\"}"

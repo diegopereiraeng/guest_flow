@@ -1,0 +1,90 @@
+template:
+  name: GuestFlow Service Pipeline
+  identifier: guestflow_service_pipeline
+  versionLabel: 1.0.1
+  type: Pipeline
+  # scope: project — create inside the target project in sandbox
+  spec:
+    variables:
+      - name: SERVICE_DIR
+        type: String
+        description: Service directory (backend or frontend)
+        value: <+input>
+      - name: IMAGE_NAME
+        type: String
+        description: ECR image name
+        value: <+input>
+      - name: DOCKERFILE
+        type: String
+        description: Path to Dockerfile
+        value: <+input>
+      - name: DOCKER_CONTEXT
+        type: String
+        description: Docker build context
+        value: <+input>
+      - name: GENERATE_OPENAPI
+        type: String
+        description: Generate OpenAPI spec (true/false)
+        value: "false"
+      - name: CATALOG_ENTITY
+        type: String
+        description: IDP entity name (underscore form)
+        value: <+input>
+      - name: CATALOG_FILE
+        type: String
+        description: Path to component catalog YAML
+        value: <+input>
+      - name: OPENAPI_FILE
+        type: String
+        description: Path to OpenAPI catalog YAML (empty to skip)
+        value: <+input>
+      - name: AWS_ACCOUNT_ID
+        type: String
+        description: AWS account ID for ECR
+        value: <+input>
+    stages:
+      - stage:
+          name: CI
+          identifier: ci_stage
+          template:
+            templateRef: guestflow_service_ci_stage
+            versionLabel: 1.0.0
+            templateInputs:
+              type: CI
+              variables:
+                - name: SERVICE_DIR
+                  type: String
+                  value: <+pipeline.variables.SERVICE_DIR>
+                - name: IMAGE_NAME
+                  type: String
+                  value: <+pipeline.variables.IMAGE_NAME>
+                - name: DOCKERFILE
+                  type: String
+                  value: <+pipeline.variables.DOCKERFILE>
+                - name: DOCKER_CONTEXT
+                  type: String
+                  value: <+pipeline.variables.DOCKER_CONTEXT>
+                - name: CATALOG_ENTITY
+                  type: String
+                  value: <+pipeline.variables.CATALOG_ENTITY>
+      - stage:
+          name: IDP
+          identifier: idp_stage
+          template:
+            templateRef: guestflow_idp_stage
+            versionLabel: 1.0.0
+            templateInputs:
+              type: IDP
+              variables:
+                - name: CATALOG_ENTITY
+                  type: String
+                  value: <+pipeline.variables.CATALOG_ENTITY>
+                - name: CI_STAGE_ID
+                  type: String
+                  value: ci_stage
+                - name: CATALOG_FILE
+                  type: String
+                  value: <+pipeline.variables.CATALOG_FILE>
+                - name: OPENAPI_FILE
+                  type: String
+                  value: <+pipeline.variables.OPENAPI_FILE>

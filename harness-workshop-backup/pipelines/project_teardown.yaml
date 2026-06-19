@@ -1,0 +1,270 @@
+pipeline:
+  identifier: project_teardown
+  name: project-teardown
+  orgIdentifier: LAB
+  projectIdentifier: IDP
+  description: "Teardown all resources created by project_setup_v2 — use between workshop attendees"
+  tags:
+    idp: ""
+    teardown: ""
+  variables:
+    - name: project_identifier
+      type: String
+      description: Project identifier to destroy (e.g. test_app)
+      value: <+input>
+    - name: service_name
+      type: String
+      description: Service name (e.g. test-service)
+      value: <+input>
+    - name: service_type
+      type: String
+      description: "Service type: fullstack, backend, or frontend"
+      value: fullstack
+    - name: harness_org
+      type: String
+      description: Harness org identifier
+      value: LAB
+  stages:
+    - stage:
+        name: Cleanup Pipelines and Resources
+        identifier: cleanup_pipelines_stage
+        type: CI
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Delete CI Pipelines
+                  identifier: delete_ci_pipelines
+                  type: Run
+                  timeout: 5m
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJ_ID="<+pipeline.variables.project_identifier>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
+
+                      del_pipeline() {
+                        PIPE_ID="$1"
+                        HTTP=$(curl -s -o /tmp/dp.txt -w "%{http_code}" -X DELETE \
+                          "https://app.harness.io/pipeline/api/pipelines/${PIPE_ID}?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
+                          -H "x-api-key: $KEY")
+                        if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deleted pipeline: $PIPE_ID"
+                        elif [ "$HTTP" = "404" ]; then echo "Pipeline not found (already gone): $PIPE_ID"
+                        else echo "Delete pipeline HTTP $HTTP for $PIPE_ID: $(cat /tmp/dp.txt | head -c 200)"
+                        fi
+                      }
+
+                      case "$SERVICE_TYPE" in
+                        backend)
+                          del_pipeline "${SERVICE_ID}_api_ci"
+                          ;;
+                        frontend)
+                          del_pipeline "${SERVICE_ID}_web_ci"
+                          ;;
+                        fullstack)
+                          del_pipeline "${SERVICE_ID}_api_ci"
+                          del_pipeline "${SERVICE_ID}_web_ci"
+                          ;;
+                      esac
+                      echo "Pipeline cleanup done"
+              - step:
+                  name: Delete Harness Service
+                  identifier: delete_harness_service
+                  type: Run
+                  timeout: 5m
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJ_ID="<+pipeline.variables.project_identifier>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
+
+                      HTTP=$(curl -s -o /tmp/ds.txt -w "%{http_code}" -X DELETE \
+                        "https://app.harness.io/ng/api/servicesV2/${SERVICE_ID}?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
+                        -H "x-api-key: $KEY")
+                      if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deleted service: $SERVICE_ID"
+                      elif [ "$HTTP" = "404" ]; then echo "Service not found (already gone): $SERVICE_ID"
+                      else echo "Delete service HTTP $HTTP: $(cat /tmp/ds.txt | head -c 200)"
+                      fi
+              - step:
+                  name: Delete HAR Registry
+                  identifier: delete_har_registry
+                  type: Run
+                  timeout: 5m
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJ_ID="<+pipeline.variables.project_identifier>"
+                      SPACE_REF="${ACCOUNT}/${ORG}/${PROJ_ID}"
+
+                      REG_REF="${ACCOUNT}/${ORG}/${PROJ_ID}/${PROJ_ID}"
+                      HTTP=$(curl -s -o /tmp/dhar.txt -w "%{http_code}" -X DELETE \
+                        "https://app.harness.io/har/api/v1/registry/${REG_REF}" \
+                        -H "x-api-key: $KEY")
+                      if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deleted HAR registry: $PROJ_ID"
+                      elif [ "$HTTP" = "404" ]; then echo "HAR registry not found (already gone): $PROJ_ID"
+                      else echo "Delete HAR HTTP $HTTP: $(cat /tmp/dhar.txt | head -c 200)"
+                      fi
+    - stage:
+        name: Cleanup IDP Catalog
+        identifier: cleanup_idp_stage
+        type: CI
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Deregister IDP Entities
+                  identifier: deregister_idp_entities
+                  type: Run
+                  timeout: 5m
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Ignore
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+                      SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
+
+                      del_entity() {
+                        KIND="$1" NAME="$2"
+                        HTTP=$(curl -s -o /tmp/die.txt -w "%{http_code}" -X DELETE \
+                          "https://app.harness.io/v1/entities/${KIND}/default/${NAME}" \
+                          -H "Harness-Account: $ACCOUNT" \
+                          -H "x-api-key: $KEY")
+                        if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deregistered IDP entity: $KIND/$NAME"
+                        elif [ "$HTTP" = "404" ] || [ "$HTTP" = "400" ]; then echo "IDP entity not found (already gone): $KIND/$NAME"
+                        else echo "Deregister IDP HTTP $HTTP for $KIND/$NAME: $(cat /tmp/die.txt | head -c 200)"
+                        fi
+                      }
+
+                      case "$SERVICE_TYPE" in
+                        backend)
+                          del_entity "component" "${SERVICE_ID}_api"
+                          del_entity "api" "${SERVICE_ID}_api"
+                          ;;
+                        frontend)
+                          del_entity "component" "${SERVICE_ID}_web"
+                          ;;
+                        fullstack)
+                          del_entity "component" "${SERVICE_ID}_api"
+                          del_entity "api" "${SERVICE_ID}_api"
+                          del_entity "component" "${SERVICE_ID}_web"
+                          ;;
+                      esac
+                      echo "IDP cleanup done (best-effort)"
+        when:
+          pipelineStatus: All
+    - stage:
+        name: Delete Code Repo
+        identifier: delete_repo_stage
+        type: CI
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Delete Harness Code Repo
+                  identifier: delete_harness_repo
+                  type: Run
+                  timeout: 5m
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJ_ID="<+pipeline.variables.project_identifier>"
+                      SERVICE_NAME="<+pipeline.variables.service_name>"
+
+                      REPO_REF="${ACCOUNT}/${ORG}/${PROJ_ID}/${SERVICE_NAME}"
+                      HTTP=$(curl -s -o /tmp/drepo.txt -w "%{http_code}" -X DELETE \
+                        "https://app.harness.io/code/api/v1/repos/${REPO_REF}" \
+                        -H "x-api-key: $KEY")
+                      if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deleted repo: $SERVICE_NAME"
+                      elif [ "$HTTP" = "404" ]; then echo "Repo not found (already gone): $SERVICE_NAME"
+                      else echo "Delete repo HTTP $HTTP: $(cat /tmp/drepo.txt | head -c 200)"
+                      fi
+        when:
+          pipelineStatus: All
+    - stage:
+        name: Delete Project
+        identifier: delete_project_stage
+        type: CI
+        spec:
+          cloneCodebase: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  name: Delete Harness Project
+                  identifier: delete_harness_project
+                  type: Run
+                  timeout: 5m
+                  spec:
+                    shell: Sh
+                    command: |-
+                      KEY=<+secrets.getValue("account.harness_api_key")>
+                      ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJ_ID="<+pipeline.variables.project_identifier>"
+
+                      HTTP=$(curl -s -o /tmp/dproj.txt -w "%{http_code}" -X DELETE \
+                        "https://app.harness.io/ng/api/projects/${PROJ_ID}?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG" \
+                        -H "x-api-key: $KEY")
+                      if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deleted project: $PROJ_ID"
+                      elif [ "$HTTP" = "404" ]; then echo "Project not found (already gone): $PROJ_ID"
+                      else echo "Delete project HTTP $HTTP: $(cat /tmp/dproj.txt | head -c 200)"
+                        exit 1
+                      fi
+                      echo "==> Teardown complete for project: $PROJ_ID"
+        when:
+          pipelineStatus: All
+  properties:
+    ci:
+      codebase:
+        connectorRef: account.HarnessCode
+        repoName: <service_name>
+        build: <+input>
