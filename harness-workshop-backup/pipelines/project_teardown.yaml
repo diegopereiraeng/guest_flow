@@ -232,25 +232,26 @@ pipeline:
 
                       # HAR namespace is account-global — registry may be anchored under a different org.
                       # Try the expected path first; if 404, probe known orgs (Admin, LAB, default).
+                      # HAR DELETE path = org/project/registry_id (account inferred from api key)
                       del_har() {
-                        local REF="$1"
+                        local SPACE="$1"
                         HTTP=$(curl -s -o /tmp/dhar.txt -w "%{http_code}" -X DELETE \
-                          "https://app.harness.io/har/api/v1/registry/${REF}" \
+                          "https://app.harness.io/har/api/v1/registry/${SPACE}/${PROJ_ID}" \
                           -H "x-api-key: $KEY")
-                        echo -n "  DELETE ${REF}: HTTP=$HTTP"
+                        echo -n "  DELETE registry/${SPACE}/${PROJ_ID}: HTTP=$HTTP"
                         if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo " OK"; return 0
                         elif [ "$HTTP" = "404" ]; then echo " (not found)"; return 1
                         else echo " ERR: $(cat /tmp/dhar.txt | head -c 100)"; return 2
                         fi
                       }
 
-                      # Try primary path
-                      del_har "${REG_REF}" && exit 0
+                      # Try primary space (ORG/PROJECT — account inferred from api key)
+                      del_har "${ORG}/${PROJ_ID}" && exit 0
 
                       # Probe alternate orgs in case the registry is anchored elsewhere
                       for ALT_ORG in Admin LAB default; do
                         [ "$ALT_ORG" = "$ORG" ] && continue
-                        del_har "${ACCOUNT}/${ALT_ORG}/${PROJ_ID}/${PROJ_ID}" && exit 0
+                        del_har "${ALT_ORG}/${PROJ_ID}" && exit 0
                       done
 
                       # Nothing found — treat as already gone
