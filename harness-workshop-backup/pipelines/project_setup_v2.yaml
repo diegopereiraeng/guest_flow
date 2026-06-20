@@ -225,7 +225,10 @@ pipeline:
                         if [ "$IS_VITE" = "true" ]; then
                           # Vite project: vitest is already installed — switch test:ci to use it with JUnit output
                           # This avoids needing to add jest + ts-jest + babel to a Vite project
-                          jq '.scripts["test:ci"] = "npx vitest run --reporter=junit --outputFile=test-results/junit.xml" | .devDependencies["jsdom"] = "^24.0.0" | .devDependencies["@vitest/coverage-v8"] = "^2.0.0"' \
+                          # Add jsdom for vitest browser environment; do NOT add @vitest/coverage-v8
+                          # because its major version must match the installed vitest version —
+                          # mismatching (e.g. vitest@1 + coverage-v8@2) causes an npm ERESOLVE conflict.
+                          jq '.scripts["test:ci"] = "npx vitest run --reporter=junit --outputFile=test-results/junit.xml" | .devDependencies["jsdom"] = "^20.0.0"' \
                             "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                           echo "  Patched test:ci => vitest + jsdom (vite project): $PKG_FILE"
                           continue
@@ -257,8 +260,9 @@ pipeline:
                         fi
                         # If jest.config.ts (or .js/.cjs) already exists, remove the inline 'jest' key
                         # from package.json to avoid "multiple configurations found" error
+                        # NOTE: use POSIX-compatible checks (no brace expansion — shell is /bin/sh not bash)
                         PKG_DIR=$(dirname "$PKG_FILE")
-                        if ls "$PKG_DIR"/jest.config.{ts,js,cjs,mjs} 2>/dev/null | grep -q .; then
+                        if [ -f "$PKG_DIR/jest.config.ts" ] || [ -f "$PKG_DIR/jest.config.js" ] || [ -f "$PKG_DIR/jest.config.cjs" ] || [ -f "$PKG_DIR/jest.config.mjs" ]; then
                           jq 'del(.jest)' "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                           echo "  Removed inline jest config from $PKG_FILE (jest.config.* exists)"
                         fi
@@ -289,6 +293,12 @@ pipeline:
                         sed -i 's/"jsx": "react"/"jsx": "react-jsx"/g' "$TSC_FILE"
                         echo "  Patched noUnusedLocals/Params + jsx:react-jsx in $TSC_FILE"
                       done
+                      # Patch vite.config.ts: add passWithNoTests so vitest exits 0 when no test files exist
+                      VITE_CFG="/harness/$SERVICE_NAME/frontend/vite.config.ts"
+                      if [ -f "$VITE_CFG" ] && grep -q "environment:" "$VITE_CFG"; then
+                        sed -i "s/environment: 'jsdom',/environment: 'jsdom',\n      passWithNoTests: true,/" "$VITE_CFG"
+                        echo "  Added passWithNoTests to vite.config.ts"
+                      fi
                       # Fix main.tsx: if it uses React.StrictMode directly, replace with named import
                       # (react-jsx transform covers JSX syntax but NOT direct React.* API calls)
                       MAIN_TSX="/harness/$SERVICE_NAME/frontend/src/main.tsx"
@@ -322,7 +332,7 @@ pipeline:
                         fi
                         echo "  npm install: $PKG_DIR"
                         cd "$PKG_DIR"
-                        npm install --ignore-scripts 2>&1 | tail -5
+                        npm install --ignore-scripts --legacy-peer-deps 2>&1 | tail -5
                         [ -f "package-lock.json" ] && echo "  generated: $PKG_DIR/package-lock.json" || echo "  WARN: package-lock.json not generated in $PKG_DIR"
                         cd /harness/$SERVICE_NAME
                       done
@@ -444,7 +454,9 @@ pipeline:
                       APP_NAME="<+pipeline.variables.app_name>"
                       # One Docker registry per project — all service images live inside it
                       SPACE_REF="${ACCOUNT}/${ORG}/${PROJ_ID}"
-                      REG_ID="${PROJ_ID}"
+                      ORG_LOWER=$(echo "$ORG" | tr '[:upper:]' '[:lower:]')
+                      # Prefix with org to avoid ghost-registry collisions (HAR IDs are account-global)
+                      REG_ID="${ORG_LOWER}_${PROJ_ID}"
                       REG_NAME="${APP_NAME}"
                       ACCOUNT_LOWER=$(echo "$ACCOUNT" | tr '[:upper:]' '[:lower:]')
 
@@ -471,15 +483,29 @@ pipeline:
                         # OWNER_REF = ACCOUNT/ORG/PROJECT — strip leading ACCOUNT segment to get ORG/PROJECT
                         OWNER_SPACE=$(echo "$OWNER_REF" | cut -d'/' -f2-)
 
-                        try_del() {
-                          local SPACE="$1"
-                          local URL="https://app.harness.io/har/api/v1/registry/${SPACE}/${REG_ID}"
+                        # HAR DELETE URL format is not publicly documented — try all known patterns
+                        # until one returns 200/204. Patterns tried (in order):
+                        #   1. path: /registry/{ORG}/{PROJECT}/{REG}           (no account)
+                        #   2. path: /registry/{ACCOUNT}/{ORG}/{PROJECT}/{REG} (full ref)
+                        #   3. qparam: /registry/{REG}?space_ref={ORG}/{PROJECT}
+                        #   4. qparam: /registry/{REG}?space_ref={ACCOUNT}/{ORG}/{PROJECT}
+                        try_del_url() {
+                          local URL="$1"
                           DEL_HTTP=$(curl -s -o /tmp/hr_del.txt -w "%{http_code}" -X DELETE "$URL" -H "x-api-key: $KEY")
-                          echo "  DELETE ${SPACE}/${REG_ID} => HTTP=$DEL_HTTP: $(head -c 80 /tmp/hr_del.txt)"
+                          echo "  DELETE $URL => HTTP=$DEL_HTTP: $(head -c 80 /tmp/hr_del.txt)"
                           [ "$DEL_HTTP" = "200" ] || [ "$DEL_HTTP" = "204" ]
                         }
+                        try_del() {
+                          local SPACE="$1"  # ORG/PROJECT without account, e.g. "Admin/demo_app"
+                          local FULL="${ACCOUNT}/${SPACE}"
+                          try_del_url "https://app.harness.io/har/api/v1/registry/${SPACE}/${REG_ID}" && return 0
+                          try_del_url "https://app.harness.io/har/api/v1/registry/${FULL}/${REG_ID}" && return 0
+                          try_del_url "https://app.harness.io/har/api/v1/registry/${REG_ID}?space_ref=${SPACE}" && return 0
+                          try_del_url "https://app.harness.io/har/api/v1/registry/${REG_ID}?space_ref=${FULL}" && return 0
+                          return 1
+                        }
 
-                        echo "  Owner space: $OWNER_SPACE — trying path-based DELETE..."
+                        echo "  Owner space: $OWNER_SPACE — trying query-param DELETE..."
                         DEL_OK=false
                         # Try the parsed owner path first (most accurate)
                         try_del "${OWNER_SPACE}" && DEL_OK=true
@@ -506,10 +532,9 @@ pipeline:
                       else
                         echo "FAIL HTTP=$RESP: $(head -c 300 /tmp/hr.txt)"; exit 1
                       fi
-                      # Create DockerRegistry connector with same identifier as HAR registry.
-                      # BuildAndPushDockerRegistry in the CI template uses registryRef: {PROJ_ID} which must
-                      # resolve to a connector. This connector points to pkg.harness.io so the push URL
-                      # becomes pkg.harness.io/{accountLower}/{registryId}/{imageName}:{tag}.
+                      # Create DockerRegistry connector (same ID as HAR registry) for Trivy image scan.
+                      # The CI template also has a connectorRef input for AquaTrivy — this connector
+                      # points to pkg.harness.io so Trivy can pull the pushed image for scanning.
                       CONN_JSON="{\"connector\":{\"name\":\"${REG_NAME}\",\"identifier\":\"${REG_ID}\",\"orgIdentifier\":\"${ORG}\",\"projectIdentifier\":\"${PROJ_ID}\",\"type\":\"DockerRegistry\",\"spec\":{\"dockerRegistryUrl\":\"https://pkg.harness.io/${ACCOUNT_LOWER}/${REG_ID}\",\"providerType\":\"DockerHub\",\"executeOnDelegate\":false,\"auth\":{\"type\":\"UsernamePassword\",\"spec\":{\"username\":\"harness_pat\",\"passwordRef\":\"account.harness_api_key\"}}}}}"
                       CONN_HTTP=$(curl -s -o /tmp/conn.txt -w "%{http_code}" -X POST \
                         "https://app.harness.io/ng/api/connectors?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
@@ -550,8 +575,9 @@ pipeline:
                       SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
                       # Lowercase account ID — HAR push URL format: pkg.harness.io/{accountLower}/{registryId}/{imageName}
                       ACCOUNT_LOWER=$(echo "$ACCOUNT" | tr '[:upper:]' '[:lower:]')
-                      # HAR registry ID matches project ID (set in create_har_registry step)
-                      REG_ID="${PROJ_ID}"
+                      ORG_LOWER=$(echo "$ORG" | tr '[:upper:]' '[:lower:]')
+                      # HAR registry ID: {org_lower}_{proj_id} — matches create_har_registry step
+                      REG_ID="${ORG_LOWER}_${PROJ_ID}"
 
                       LT='<' PL='+' GT='>'
                       INP="${LT}${PL}input${GT}"
@@ -617,7 +643,7 @@ pipeline:
                                                   type: BuildAndPushDockerRegistry
                                                   spec:
                                                     repo: ${IMG}
-                                                    registryRef: ${PROJ_ID}
+                                                    registryRef: ${REG_ID}
                                         - stepGroup:
                                             identifier: security_container
                                             steps:
@@ -625,10 +651,10 @@ pipeline:
                                                   identifier: trivy_scan
                                                   type: AquaTrivy
                                                   spec:
-                                                    connectorRef: ""
+                                                    connectorRef: ${REG_ID}
                                                     image:
                                                       type: harness
-                                                      registry: ${PROJ_ID}
+                                                      registry: ${REG_ID}
                           - stage:
                               name: IDP
                               identifier: idp_stage
@@ -666,7 +692,12 @@ pipeline:
                         RESP=$(curl -s -o /tmp/pr.txt -w "%{http_code}" -X POST \
                           "https://app.harness.io/pipeline/api/pipelines?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
                           -H "x-api-key: $KEY" -H "Content-Type: application/yaml" --data-binary @/tmp/pipe.yaml)
-                        if grep -q "already exists\|DUPLICATE\|409" /tmp/pr.txt 2>/dev/null; then echo "  exists: $PIPE_NAME"
+                        if grep -q "already exists\|DUPLICATE\|409" /tmp/pr.txt 2>/dev/null; then
+                          UPD=$(curl -s -o /tmp/pu.txt -w "%{http_code}" -X PUT \
+                            "https://app.harness.io/pipeline/api/pipelines/${PIPE_ID}?accountIdentifier=$ACCOUNT&orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
+                            -H "x-api-key: $KEY" -H "Content-Type: application/yaml" --data-binary @/tmp/pipe.yaml)
+                          if [ "$UPD" = "200" ] || [ "$UPD" = "201" ]; then echo "  updated: $PIPE_NAME"
+                          else echo "  update failed HTTP=$UPD: $(head -c 300 /tmp/pu.txt)"; fi
                         elif [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then echo "  created: $PIPE_NAME"
                         else echo "  failed HTTP=$RESP: $(head -c 300 /tmp/pr.txt)"; exit 1
                         fi
