@@ -1,0 +1,205 @@
+apiVersion: harness.io/v1
+kind: Workflow
+identifier: workshop_project_setup_v2
+name: "Workshop: Criar Projeto Completo v2"
+type: service
+owner: admin@harness.io
+orgIdentifier: Admin
+projectIdentifier: IDP_Workflows
+
+metadata:
+  description: >
+    Cria um projeto completo no Harness Workshop: projeto, repositório de código,
+    scaffold cookiecutter, pipeline de CI, SonarQube e registro no catálogo IDP.
+  tags:
+    - workshop
+    - self-service
+    - ci-cd
+    - idp
+
+spec:
+  parameters:
+    # ─────────────────────────────────────────────
+    # ETAPA 1 — Identificação do Projeto
+    # ─────────────────────────────────────────────
+    - title: "1️⃣  Identificação do Projeto"
+      description: >
+        Defina o nome e identificador do seu projeto Harness.
+        O identificador deve ser único e usar apenas letras, números e underscore.
+      type: object
+      required:
+        - app_name
+        - project_name
+        - project_identifier
+        - project_description
+      properties:
+        token:
+          title: Harness Token
+          type: string
+          ui:widget: password
+          ui:field: HarnessAuthToken
+        app_name:
+          title: Nome da Aplicação
+          type: string
+          description: Nome curto e descritivo da aplicação (ex. minha-api, store-web)
+          ui:autofocus: true
+          ui:placeholder: "ex: minha-api"
+        project_name:
+          title: Nome do Projeto Harness
+          type: string
+          description: Nome legível do projeto que será criado no Harness
+          ui:placeholder: "ex: Minha API Project"
+        project_identifier:
+          title: Identificador do Projeto
+          type: string
+          description: >
+            Identificador único do projeto — apenas letras, números e underscore.
+            Será usado como ID nas APIs.
+          pattern: "^[a-zA-Z][a-zA-Z0-9_]{2,63}$"
+          ui:placeholder: "ex: minha_api_project"
+        project_description:
+          title: Descrição do Projeto
+          type: string
+          description: Breve descrição do propósito do projeto
+          ui:widget: textarea
+          ui:placeholder: "ex: Projeto de workshop de CI/CD com Harness"
+
+    # ─────────────────────────────────────────────
+    # ETAPA 2 — Detalhes do Serviço
+    # ─────────────────────────────────────────────
+    - title: "2️⃣  Detalhes do Serviço"
+      description: >
+        Configure o serviço principal que será criado dentro do projeto.
+        O tipo define a estrutura do scaffold e os pipelines que serão gerados.
+      type: object
+      required:
+        - service_name
+        - service_description
+        - service_type
+      properties:
+        service_name:
+          title: Nome do Serviço
+          type: string
+          description: >
+            Nome do serviço no Harness e no catálogo IDP.
+            Use letras minúsculas, números e hifens.
+          pattern: "^[a-z][a-z0-9-]{2,63}$"
+          ui:placeholder: "ex: minha-api"
+        service_description:
+          title: Descrição do Serviço
+          type: string
+          description: Breve descrição do que o serviço faz
+          ui:widget: textarea
+          ui:placeholder: "ex: API REST para gerenciamento de usuários"
+        service_type:
+          title: Tipo do Serviço
+          type: string
+          description: >
+            Define o scaffold gerado e os pipelines de CI criados.
+            • backend — Node.js API (Express/Fastify), gera 1 pipeline
+            • frontend — React/Vite SPA, gera 1 pipeline
+            • fullstack — backend + frontend, gera 2 pipelines
+          enum:
+            - backend
+            - frontend
+            - fullstack
+          default: backend
+          ui:widget: radio
+
+    # ─────────────────────────────────────────────
+    # ETAPA 3 — Configurações Avançadas
+    # ─────────────────────────────────────────────
+    - title: "3️⃣  Configurações Avançadas"
+      description: >
+        Configure o administrador do projeto e parâmetros de qualidade.
+        O threshold de cobertura define o mínimo aceitável de testes para o quality gate.
+      type: object
+      required:
+        - admin_email
+      properties:
+        admin_email:
+          title: E-mail do Administrador
+          type: string
+          description: >
+            E-mail do usuário que receberá permissão de Admin no projeto.
+            Deve ser um usuário existente na conta Harness ou um novo convite será enviado.
+          format: email
+          ui:placeholder: "dev@empresa.com"
+        harness_org:
+          title: Organização Harness
+          type: string
+          description: Organização Harness onde o projeto será criado
+          default: "LAB"
+          enum:
+            - LAB
+            - Admin
+            - default
+          ui:widget: select
+        coverage_threshold:
+          title: Threshold de Cobertura de Testes (%)
+          type: integer
+          description: >
+            Percentual mínimo de cobertura de código exigido pelo quality gate de CI.
+            O build falhará se a cobertura ficar abaixo desse valor.
+          default: 80
+          minimum: 0
+          maximum: 100
+          ui:widget: range
+
+  # ─────────────────────────────────────────────
+  # ACTIONS — Dispara o pipeline project_setup_v2
+  # ─────────────────────────────────────────────
+  steps:
+    - id: trigger_project_setup
+      name: "Criar Projeto via Pipeline"
+      action: trigger:harness-custom-pipeline
+      input:
+        # Substitua YOUR_ACCOUNT_ID pelo identificador real da conta Harness
+        url: "https://app.harness.io/ng/account/OIljsRhEThGoczsL24wUFw/module/idp/orgs/Admin/projects/IDP_Workflows/pipelines/project_setup_v2/pipeline-studio/?storeType=INLINE"
+        inputset:
+          app_name: ${{ parameters.app_name }}
+          project_name: ${{ parameters.project_name }}
+          project_identifier: ${{ parameters.project_identifier }}
+          project_description: ${{ parameters.project_description }}
+          service_name: ${{ parameters.service_name }}
+          service_description: ${{ parameters.service_description }}
+          service_type: ${{ parameters.service_type }}
+          admin_email: ${{ parameters.admin_email }}
+          harness_org: ${{ parameters.harness_org }}
+          coverage_threshold: ${{ parameters.coverage_threshold }}
+        apikey: ${{ parameters.token }}
+        hidePipelineURLLog: false
+        showOutputVariables: true
+
+  # ─────────────────────────────────────────────
+  # OUTPUT — Exibido após conclusão do workflow
+  # ─────────────────────────────────────────────
+  output:
+    links:
+      - title: "Ver Execução do Pipeline"
+        url: ${{ steps.trigger_project_setup.output.PipelineUrl }}
+        icon: dashboard
+      - title: "Abrir Projeto no Harness"
+        url: "https://app.harness.io/ng/account/OIljsRhEThGoczsL24wUFw/module/cd/orgs/${{ parameters.harness_org }}/projects/${{ parameters.project_identifier }}"
+        icon: catalog
+    text:
+      - title: "Projeto Criado com Sucesso!"
+        content: |
+          ### Resumo do Provisionamento
+
+          | Campo | Valor |
+          |---|---|
+          | **Aplicação** | `${{ parameters.app_name }}` |
+          | **Projeto** | `${{ parameters.project_name }}` |
+          | **Identificador** | `${{ parameters.project_identifier }}` |
+          | **Serviço** | `${{ parameters.service_name }}` |
+          | **Tipo** | `${{ parameters.service_type }}` |
+          | **Organização** | `${{ parameters.harness_org }}` |
+          | **Admin** | `${{ parameters.admin_email }}` |
+          | **Cobertura mínima** | `${{ parameters.coverage_threshold }}%` |
+
+          O pipeline está provisionando os recursos. Aguarde a conclusão para acessar:
+          - Repositório de código no Harness Code
+          - Pipeline(s) de CI com quality gates
+          - Projeto SonarQube para análise de qualidade
+          - Entidade registrada no catálogo IDP

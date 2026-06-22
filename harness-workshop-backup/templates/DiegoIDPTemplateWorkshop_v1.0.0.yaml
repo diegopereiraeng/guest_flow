@@ -19,6 +19,13 @@ template:
       - name: OPENAPI_FILE
         type: String
         value: <+input>
+      - name: COVERAGE_THRESHOLD
+        type: String
+        value: "80"
+      - name: SONAR_PROJECT_KEY
+        type: String
+        required: false
+        value: <+input>
     spec:
       cloneCodebase: false
       platform:
@@ -165,20 +172,22 @@ template:
                       LICENSE_ERRORS_VAL=$(safe "$LICENSE_ERRORS" "none")
 
                       # --- display formatters ---
-                      fmt_bool()     { [ "$1" = "true" ] && echo "Pass" || echo "Fail"; }
-                      fmt_critical() { [ "$1" = "0" ] && echo "0" || echo "$1 CRITICAL"; }
+                      fmt_bool()     { [ "$1" = "true" ] && echo "✅ Pass" || echo "❌ Fail"; }
+                      fmt_critical() { [ "$1" = "0" ] && echo "✅ 0" || echo "🚨 $1"; }
+                      fmt_high()     { [ "$1" = "0" ] && echo "✅ 0" || echo "⚠️ $1"; }
                       fmt_coverage() {
                         local v="$1" t="${2:-80}"
                         node -e "process.exitCode = parseFloat('$v') >= parseFloat('$t') ? 0 : 1" 2>/dev/null \
-                          && echo "${v}%" || echo "${v}% (below threshold)"
+                          && echo "✅ ${v}%" || echo "❌ ${v}%"
                       }
-                      fmt_status()  { [ "$1" = "SUCCESS" ] && echo "SUCCESS" || echo "$1"; }
-                      fmt_license() { [ "$1" = "none" ] && echo "none" || echo "$1"; }
+                      fmt_status()  { [ "$1" = "SUCCESS" ] && echo "✅ SUCCESS" || echo "❌ $1"; }
+                      fmt_license() { [ "$1" = "none" ] && echo "✅ none" || echo "❌ $1"; }
 
+                      # --- display values ---
                       DISP_BUILD_STATUS=$(fmt_status "$PIPELINE_STATUS")
                       DISP_COVERAGE=$(fmt_coverage "$COVERAGE_PCT_VAL" "<+stage.variables.COVERAGE_THRESHOLD>")
                       DISP_VULN_CRIT=$(fmt_critical "$VULN_CRIT_VAL")
-                      DISP_VULN_HIGH="$VULN_HIGH_VAL"
+                      DISP_VULN_HIGH=$(fmt_high "$VULN_HIGH_VAL")
                       DISP_LICENSE_ERRORS=$(fmt_license "$LICENSE_ERRORS_VAL")
                       DISP_COVERAGE_PASSED=$(fmt_bool "$COVERAGE_PASSED")
                       DISP_TYPECHECK=$(fmt_bool "$TYPECHECK_PASSED")
@@ -193,6 +202,9 @@ template:
 
                       echo "=== Catalog Ingestion ==="
                       echo "coverage=$COVERAGE_PASSED ($COVERAGE_PCT_VAL%) typecheck=$TYPECHECK_PASSED sonar=$SONAR_PASSED"
+                      echo "secrets=$SECRETS_PASSED sast=$SAST_PASSED sca=$SCA_PASSED noHighVulns=$NO_HIGH_PASSED"
+                      echo "container=$CONTAINER_PASSED deps=$DEPS_PASSED license=$LICENSE_PASSED"
+                      echo "vulnCrit=$VULN_CRIT_VAL vulnHigh=$VULN_HIGH_VAL licenseErrors=$LICENSE_ERRORS_VAL"
 
                       RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
                         "https://app.harness.io/gateway/v1/catalog/custom-properties/entity" \
@@ -200,7 +212,7 @@ template:
                         -H "Harness-Account: $ACCOUNT" \
                         -H "Content-Type: application/json" \
                         -d "{
-                          \"entity_ref\": \"component:account/<+stage.variables.CATALOG_ENTITY>\",
+                          \"entity_ref\": \"component:<+org.identifier>/<+project.identifier>/<+stage.variables.CATALOG_ENTITY>\",
                           \"properties\": [
                             {\"property\": \"metadata.scorecards.quality.coveragePassed\",    \"value\": $COVERAGE_PASSED},
                             {\"property\": \"metadata.scorecards.quality.typecheckPassed\",   \"value\": $TYPECHECK_PASSED},
@@ -223,7 +235,41 @@ template:
                             {\"property\": \"metadata.build.lastBuildId\",                    \"value\": \"$PIPELINE_EXEC_ID\"},
                             {\"property\": \"metadata.build.lastBuildUrl\",                   \"value\": \"$LAST_BUILD_URL\"},
                             {\"property\": \"metadata.build.sonarUrl\",                       \"value\": \"$SONAR_URL\"},
-                            {\"property\": \"metadata.additionalInfo.lastTriggeredBy\",       \"value\": \"$TRIGGERED_BY_VAL\"}
+                            {\"property\": \"metadata.additionalInfo.coveragePct\",           \"value\": \"$COVERAGE_PCT_VAL\"},
+                            {\"property\": \"metadata.additionalInfo.vulnCritical\",          \"value\": \"$VULN_CRIT_VAL\"},
+                            {\"property\": \"metadata.additionalInfo.vulnHigh\",              \"value\": \"$VULN_HIGH_VAL\"},
+                            {\"property\": \"metadata.additionalInfo.licenseErrors\",         \"value\": \"$LICENSE_ERRORS_VAL\"},
+                            {\"property\": \"metadata.additionalInfo.lastBuildStatus\",       \"value\": \"$PIPELINE_STATUS\"},
+                            {\"property\": \"metadata.additionalInfo.lastBuildId\",           \"value\": \"$PIPELINE_EXEC_ID\"},
+                            {\"property\": \"metadata.additionalInfo.lastBuildUrl\",          \"value\": \"$LAST_BUILD_URL\"},
+                            {\"property\": \"metadata.additionalInfo.sonarUrl\",              \"value\": \"$SONAR_URL\"},
+                            {\"property\": \"metadata.additionalInfo.coveragePassed\",        \"value\": \"$COVERAGE_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.typecheckPassed\",       \"value\": \"$TYPECHECK_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.sonarGatePassed\",       \"value\": \"$SONAR_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.noSecretLeaks\",         \"value\": \"$SECRETS_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.sastPassed\",            \"value\": \"$SAST_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.scaPassed\",             \"value\": \"$SCA_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.noHighVulns\",           \"value\": \"$NO_HIGH_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.containerPassed\",       \"value\": \"$CONTAINER_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.licenseCompliant\",      \"value\": \"$LICENSE_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.depsUpToDate\",          \"value\": \"$DEPS_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.disp.buildStatus\",      \"value\": \"$DISP_BUILD_STATUS\"},
+                            {\"property\": \"metadata.additionalInfo.disp.coveragePct\",      \"value\": \"$DISP_COVERAGE\"},
+                            {\"property\": \"metadata.additionalInfo.disp.vulnCritical\",     \"value\": \"$DISP_VULN_CRIT\"},
+                            {\"property\": \"metadata.additionalInfo.disp.vulnHigh\",         \"value\": \"$DISP_VULN_HIGH\"},
+                            {\"property\": \"metadata.additionalInfo.disp.licenseErrors\",    \"value\": \"$DISP_LICENSE_ERRORS\"},
+                            {\"property\": \"metadata.additionalInfo.disp.coveragePassed\",   \"value\": \"$DISP_COVERAGE_PASSED\"},
+                            {\"property\": \"metadata.additionalInfo.disp.typecheckPassed\",  \"value\": \"$DISP_TYPECHECK\"},
+                            {\"property\": \"metadata.additionalInfo.disp.sonarGatePassed\",  \"value\": \"$DISP_SONAR\"},
+                            {\"property\": \"metadata.additionalInfo.disp.noSecretLeaks\",    \"value\": \"$DISP_SECRETS\"},
+                            {\"property\": \"metadata.additionalInfo.disp.sastPassed\",       \"value\": \"$DISP_SAST\"},
+                            {\"property\": \"metadata.additionalInfo.disp.scaPassed\",        \"value\": \"$DISP_SCA\"},
+                            {\"property\": \"metadata.additionalInfo.disp.noHighVulns\",      \"value\": \"$DISP_NO_HIGH\"},
+                            {\"property\": \"metadata.additionalInfo.disp.containerPassed\",  \"value\": \"$DISP_CONTAINER\"},
+                            {\"property\": \"metadata.additionalInfo.disp.depsUpToDate\",     \"value\": \"$DISP_DEPS\"},
+                            {\"property\": \"metadata.additionalInfo.disp.licenseCompliant\",  \"value\": \"$DISP_LICENSE\"},
+                            {\"property\": \"metadata.additionalInfo.lastTriggeredBy\",       \"value\": \"$TRIGGERED_BY_VAL\"},
+                            {\"property\": \"metadata.additionalInfo.disp.lastTriggeredBy\",  \"value\": \"👤 $TRIGGERED_BY_VAL\"}
                           ]
                         }")
 

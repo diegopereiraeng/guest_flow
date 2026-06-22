@@ -212,29 +212,19 @@ pipeline:
 
                       echo "==> Generated $(find /harness/$SERVICE_NAME -type f | grep -v node_modules | wc -l) files"
 
-                      # Patch package.json files to add test:ci script + jest-junit reporter
-                      # CI template calls 'npm run test:ci' and expects test-results/junit.xml
                       for PKG_FILE in \
                         "/harness/$SERVICE_NAME/frontend/package.json" \
                         "/harness/$SERVICE_NAME/backend/package.json" \
                         "/harness/$SERVICE_NAME/package.json"; do
                         [ -f "$PKG_FILE" ] || continue
                         echo "==> Checking $PKG_FILE"
-                        # Detect project type
                         IS_VITE=$(jq -r 'if ((.devDependencies["vite"] // .devDependencies["@vitejs/plugin-react"]) != null) then "true" else "false" end' "$PKG_FILE")
                         if [ "$IS_VITE" = "true" ]; then
-                          # Vite project: vitest is already installed — switch test:ci to use it with JUnit output
-                          # This avoids needing to add jest + ts-jest + babel to a Vite project
-                          # Add jsdom for vitest browser environment; do NOT add @vitest/coverage-v8
-                          # because its major version must match the installed vitest version —
-                          # mismatching (e.g. vitest@1 + coverage-v8@2) causes an npm ERESOLVE conflict.
-                          jq '.scripts["test:ci"] = "npx vitest run --reporter=junit --outputFile=test-results/junit.xml" | .devDependencies["jsdom"] = "^20.0.0"' \
+                          jq '.scripts["test:ci"] = "npx vitest run --coverage --coverage.reporter=json-summary --coverage.reporter=lcov --reporter=junit --outputFile=test-results/junit.xml" | .devDependencies["jsdom"] = "^20.0.0" | .devDependencies["@vitest/coverage-v8"] = "^1.0.0"' \
                             "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
-                          echo "  Patched test:ci => vitest + jsdom (vite project): $PKG_FILE"
+                          echo "  Patched test:ci => vitest + coverage + jsdom (vite project): $PKG_FILE"
                           continue
                         fi
-                        # Non-Vite (Node/Express backend): use jest.
-                        # Skip only if BOTH test:ci AND jest binary already present.
                         HAS_TEST_CI=$(jq -e '.scripts["test:ci"]' "$PKG_FILE" > /dev/null 2>&1 && echo true || echo false)
                         HAS_JEST=$(jq -e '.devDependencies["jest"]' "$PKG_FILE" > /dev/null 2>&1 && echo true || echo false)
                         [ "$HAS_TEST_CI" = "true" ] && [ "$HAS_JEST" = "true" ] && { echo "  test:ci + jest already in $PKG_FILE (skipping)"; continue; }
@@ -245,8 +235,7 @@ pipeline:
                             '.scripts["test:ci"] = $cmd | .devDependencies["jest-junit"] = "^16.0.0" | .["jest-junit"] = {"outputDirectory": "test-results", "outputName": "junit.xml"}' \
                             "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                         else
-                          # Node/Express backend: add jest + ts-jest + jest-junit so 'npm ci' installs them
-                          TEST_CMD="jest --ci --reporters=default --reporters=jest-junit --passWithNoTests"
+                          TEST_CMD="jest --ci --coverage --coverageReporters=json-summary --coverageReporters=lcov --reporters=default --reporters=jest-junit --passWithNoTests"
                           jq --arg cmd "$TEST_CMD" \
                             '.scripts["test:ci"] = $cmd |
                              .devDependencies["jest"] = "^29.7.0" |
@@ -255,18 +244,14 @@ pipeline:
                              .devDependencies["jest-environment-jsdom"] = "^29.7.0" |
                              .devDependencies["jest-junit"] = "^16.0.0" |
                              .["jest-junit"] = {"outputDirectory": "test-results", "outputName": "junit.xml"} |
-                             .["jest"] = {"preset": "ts-jest/legacy", "testEnvironment": "node", "testMatch": ["**/?(*.)+(spec|test).[jt]s?(x)"], "passWithNoTests": true}' \
+                             .["jest"] = {"preset": "ts-jest/legacy", "testEnvironment": "node", "testMatch": ["**/?(*.)+(spec|test).[jt]s?(x)"], "passWithNoTests": true, "coverageDirectory": "coverage", "coverageReporters": ["json-summary", "lcov", "text"]}' \
                             "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                         fi
-                        # If jest.config.ts (or .js/.cjs) already exists, remove the inline 'jest' key
-                        # from package.json to avoid "multiple configurations found" error
-                        # NOTE: use POSIX-compatible checks (no brace expansion — shell is /bin/sh not bash)
                         PKG_DIR=$(dirname "$PKG_FILE")
                         if [ -f "$PKG_DIR/jest.config.ts" ] || [ -f "$PKG_DIR/jest.config.js" ] || [ -f "$PKG_DIR/jest.config.cjs" ] || [ -f "$PKG_DIR/jest.config.mjs" ]; then
                           jq 'del(.jest)' "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                           echo "  Removed inline jest config from $PKG_FILE (jest.config.* exists)"
                         fi
-                        # Also add @types/swagger-jsdoc if swagger-jsdoc is a dependency
                         if jq -e '.dependencies["swagger-jsdoc"] // .devDependencies["swagger-jsdoc"]' "$PKG_FILE" > /dev/null 2>&1; then
                           jq '.devDependencies["@types/swagger-jsdoc"] = "^6.0.4"' "$PKG_FILE" > /tmp/pkg_patched.json && mv /tmp/pkg_patched.json "$PKG_FILE"
                           echo "  Added @types/swagger-jsdoc to $PKG_FILE"
@@ -275,11 +260,6 @@ pipeline:
                       done
                       echo "==> package.json patch complete"
 
-                      # Fix TypeScript build errors in Vite+React frontend projects:
-                      # 1. Set noUnusedLocals: false — prevents "React declared but never read" TS6133
-                      #    that occurs when the cookiecutter template still emits 'import React from "react"'
-                      #    (legacy pattern; not needed with the react-jsx JSX transform used by Vite).
-                      # 2. Remove the legacy React import from every .tsx/.jsx file so the build is clean.
                       for TSC_FILE in \
                         "/harness/$SERVICE_NAME/frontend/tsconfig.json" \
                         "/harness/$SERVICE_NAME/frontend/tsconfig.app.json" \
@@ -287,24 +267,17 @@ pipeline:
                         [ -f "$TSC_FILE" ] || continue
                         sed -i 's/"noUnusedLocals": true/"noUnusedLocals": false/g' "$TSC_FILE"
                         sed -i 's/"noUnusedParameters": true/"noUnusedParameters": false/g' "$TSC_FILE"
-                        # Fix TS2686: 'React' refers to a UMD global — happens when jsx:react (old transform)
-                        # is combined with no 'import React' (we removed those above). Switch to react-jsx
-                        # (React 17+ new JSX transform) so React does not need to be in scope.
                         sed -i 's/"jsx": "react"/"jsx": "react-jsx"/g' "$TSC_FILE"
                         echo "  Patched noUnusedLocals/Params + jsx:react-jsx in $TSC_FILE"
                       done
-                      # Patch vite.config.ts: add passWithNoTests so vitest exits 0 when no test files exist
                       VITE_CFG="/harness/$SERVICE_NAME/frontend/vite.config.ts"
                       if [ -f "$VITE_CFG" ] && grep -q "environment:" "$VITE_CFG"; then
                         sed -i "s/environment: 'jsdom',/environment: 'jsdom',\n      passWithNoTests: true,/" "$VITE_CFG"
                         echo "  Added passWithNoTests to vite.config.ts"
                       fi
-                      # Fix main.tsx: if it uses React.StrictMode directly, replace with named import
-                      # (react-jsx transform covers JSX syntax but NOT direct React.* API calls)
                       MAIN_TSX="/harness/$SERVICE_NAME/frontend/src/main.tsx"
                       if [ -f "$MAIN_TSX" ] && grep -q "React\.StrictMode" "$MAIN_TSX"; then
                         sed -i 's/<React\.StrictMode>/<StrictMode>/g; s/<\/React\.StrictMode>/<\/StrictMode>/g' "$MAIN_TSX"
-                        # Add StrictMode named import if not already present
                         if ! grep -qE "import.*StrictMode.*from .react." "$MAIN_TSX"; then
                           sed -i "1s/^/import { StrictMode } from 'react'\n/" "$MAIN_TSX"
                         fi
@@ -318,8 +291,6 @@ pipeline:
                       done
                       echo "==> TypeScript patch complete"
 
-                      # Generate package-lock.json so the CI template's 'npm ci' can install deps
-                      # Also picks up the jest-junit devDependency patched above
                       echo "==> Generating package-lock.json files..."
                       for PKG_DIR in \
                         "/harness/$SERVICE_NAME/frontend" \
@@ -337,6 +308,12 @@ pipeline:
                         cd /harness/$SERVICE_NAME
                       done
                       echo "==> package-lock.json generation complete"
+                      echo "==> Creating test files..."
+                      mkdir -p "/harness/$SERVICE_NAME/frontend/src/__tests__"
+                      { echo "import { describe, it, expect } from 'vitest'"; echo "import App from '../App'"; echo ""; echo "describe('App', () => {"; echo "  it('is a function component', () => {"; echo "    expect(typeof App).toBe('function')"; echo "  })"; echo "  it('has the correct display name', () => {"; echo "    expect(App.name).toBe('App')"; echo "  })"; echo "})"; } > "/harness/$SERVICE_NAME/frontend/src/__tests__/App.test.tsx"
+                      mkdir -p "/harness/$SERVICE_NAME/backend/src/__tests__"
+                      { echo "import { router } from '../routes'"; echo ""; echo "describe('API Routes', () => {"; echo "  it('router is defined', () => {"; echo "    expect(router).toBeDefined()"; echo "  })"; echo "  it('router registers /hello route', () => {"; echo "    const paths = (router as any).stack"; echo "      .filter((layer: any) => layer.route)"; echo "      .map((layer: any) => layer.route.path as string)"; echo "    expect(paths).toContain('/hello')"; echo "  })"; echo "})"; } > "/harness/$SERVICE_NAME/backend/src/__tests__/routes.test.ts"
+                      echo "==> Test files created"
               - step:
                   name: Upload to Harness Code via REST API
                   identifier: push_to_harness_code
@@ -472,23 +449,11 @@ pipeline:
                       if [ "$RESP" = "200" ] || [ "$RESP" = "201" ]; then
                         echo "CREATED"
                       elif [ "$RESP" = "409" ] || grep -qi "already exists\|DUPLICATE\|already_exists\|already defined" /tmp/hr.txt 2>/dev/null; then
-                        # Registry may be orphaned (HAR namespace is account-global — the registry can be
-                        # anchored under a different org/project than the current one).
-                        # Parse the actual owner path from the 409 error body, e.g.:
-                        #   "already defined under 'ACCOUNT/ORG/PROJECT'"
-                        # HAR DELETE path format: /har/api/v1/registry/{org}/{project}/{registry_id}
                         echo "EXISTS (409) — extracting actual owner and purging..."
                         OWNER_REF=$(grep -o "under '[^']*'" /tmp/hr.txt | grep -o "'[^']*'" | tr -d "'" | head -1)
                         [ -z "$OWNER_REF" ] && OWNER_REF="${ACCOUNT}/${ORG}/${PROJ_ID}"
-                        # OWNER_REF = ACCOUNT/ORG/PROJECT — strip leading ACCOUNT segment to get ORG/PROJECT
                         OWNER_SPACE=$(echo "$OWNER_REF" | cut -d'/' -f2-)
 
-                        # HAR DELETE URL format is not publicly documented — try all known patterns
-                        # until one returns 200/204. Patterns tried (in order):
-                        #   1. path: /registry/{ORG}/{PROJECT}/{REG}           (no account)
-                        #   2. path: /registry/{ACCOUNT}/{ORG}/{PROJECT}/{REG} (full ref)
-                        #   3. qparam: /registry/{REG}?space_ref={ORG}/{PROJECT}
-                        #   4. qparam: /registry/{REG}?space_ref={ACCOUNT}/{ORG}/{PROJECT}
                         try_del_url() {
                           local URL="$1"
                           DEL_HTTP=$(curl -s -o /tmp/hr_del.txt -w "%{http_code}" -X DELETE "$URL" -H "x-api-key: $KEY")
@@ -496,7 +461,7 @@ pipeline:
                           [ "$DEL_HTTP" = "200" ] || [ "$DEL_HTTP" = "204" ]
                         }
                         try_del() {
-                          local SPACE="$1"  # ORG/PROJECT without account, e.g. "Admin/demo_app"
+                          local SPACE="$1"
                           local FULL="${ACCOUNT}/${SPACE}"
                           try_del_url "https://app.harness.io/har/api/v1/registry/${SPACE}/${REG_ID}" && return 0
                           try_del_url "https://app.harness.io/har/api/v1/registry/${FULL}/${REG_ID}" && return 0
@@ -507,11 +472,8 @@ pipeline:
 
                         echo "  Owner space: $OWNER_SPACE — trying query-param DELETE..."
                         DEL_OK=false
-                        # Try the parsed owner path first (most accurate)
                         try_del "${OWNER_SPACE}" && DEL_OK=true
-                        # Fall back to current org/project
                         $DEL_OK || { try_del "${ORG}/${PROJ_ID}" && DEL_OK=true; }
-                        # Probe known alternate orgs
                         for ALT_ORG in Admin LAB default; do
                           $DEL_OK && break
                           [ "$ALT_ORG" = "$ORG" ] && continue
@@ -525,8 +487,6 @@ pipeline:
                           else echo "FAIL after purge+recreate HTTP=$RESP2: $(head -c 300 /tmp/hr.txt)"; exit 1
                           fi
                         else
-                          # HAR registry is orphaned in an internal namespace — all DELETEs returned 404.
-                          # The registry 'demo_app' exists account-globally; the CI pipeline can still use it.
                           echo "WARNING: registry ${REG_ID} orphaned — cannot delete, accepting existing (CI will use it)"
                         fi
                       else
@@ -585,7 +545,6 @@ pipeline:
                       make_pipeline() {
                         PIPE_NAME="$1"; PIPE_ID="$2"; SDIR="$3"; IMG="$4"; DFILE="$5"; CTX="$6"
                         GEN_OAS="$7"; CAT_ENT="$8"; CAT_FILE="$9"; OAS_FILE="${10}"
-                        # Use "skip" sentinel for frontend (no OpenAPI) to avoid IDP template errors
                         [ -z "$OAS_FILE" ] && OAS_FILE="skip"
                         cat > /tmp/pipe.yaml << PIPEEOF
                       pipeline:
@@ -631,12 +590,12 @@ pipeline:
                                       value: ${CAT_ENT}
                                     - name: SONAR_PROJECT_KEY
                                       type: String
-                                      value: ""
+                                      value: "${SERVICE_NAME}"
                                   spec:
                                     execution:
                                       steps:
                                         - stepGroup:
-                                            identifier: build_push_ecr
+                                            identifier: build_push_har
                                             steps:
                                               - step:
                                                   identifier: push_har
@@ -651,10 +610,10 @@ pipeline:
                                                   identifier: trivy_scan
                                                   type: AquaTrivy
                                                   spec:
-                                                    connectorRef: ${REG_ID}
                                                     image:
                                                       type: harness
                                                       registry: ${REG_ID}
+                                                      domain: app.harness.io/registry
                           - stage:
                               name: IDP
                               identifier: idp_stage
@@ -748,7 +707,6 @@ pipeline:
 
                       echo "==> Ensuring SonarQube project exists: $SONAR_KEY"
 
-                      # Detect SonarCloud vs on-prem SonarQube
                       if echo "$SONAR_HOST" | grep -qi "sonarcloud"; then
                         SONAR_ORG="diegopereiraeng"
                         HTTP=$(curl -sf -o /tmp/sq.txt -w "%{http_code}" -X POST \
@@ -869,8 +827,3 @@ pipeline:
                         frontend) import_entity "catalog/$SERVICE_NAME-web.yaml" "Web";;
                       esac
                       echo "Done! Project: https://app.harness.io/ng/account/$ACCOUNT/all/orgs/$ORG/projects/$PROJ_ID"
-  properties:
-    ci:
-      codebase:
-        repoName: <service_name>
-        build: <+input>
