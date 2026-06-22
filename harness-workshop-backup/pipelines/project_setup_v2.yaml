@@ -808,17 +808,56 @@ pipeline:
                       PROJ_ID="<+pipeline.variables.project_identifier>"
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
+                      purge_stale_source_location() {
+                        # Remove catalog location records matching this file — uses idp.harness.io Backstage catalog API
+                        # IDP tracks imports globally by (repo_url+file_path) — must purge before re-import
+                        local FILE_PATH="$1"
+                        LOCS=$(curl -s \
+                          "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations" \
+                          -H "x-api-key: $KEY")
+                        # Extract location IDs where the target file path appears
+                        echo "$LOCS" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else data.get('items', [])
+for item in items:
+    loc = item.get('data', item)
+    target = sys.argv[1] if len(sys.argv) > 1 else ''
+    if target in loc.get('target', '') or target in str(loc):
+        print(loc.get('id', ''))
+" "$FILE_PATH" 2>/dev/null | while read -r LOC_ID; do
+                          [ -z "$LOC_ID" ] && continue
+                          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                            "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations/${LOC_ID}" \
+                            -H "x-api-key: $KEY")
+                          echo " Purged catalog location ${LOC_ID} (HTTP=$HTTP) for $FILE_PATH"
+                        done
+                      }
                       import_entity() {
                         local FILE_PATH="$1" LABEL="$2"
-                        RESP=$(curl -s -w "\nHTTP:%{http_code}" -X POST \
-                          "https://app.harness.io/v1/entities/import?orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
-                          -H "Content-Type: application/json" -H "Harness-Account: $ACCOUNT" -H "x-api-key: $KEY" \
-                          -d "{\"repo_name\": \"$SERVICE_NAME\", \"branch_name\": \"main\", \"file_path\": \"$FILE_PATH\", \"is_harness_code_repo\": true}")
+                        do_import() {
+                          curl -s -w "\nHTTP:%{http_code}" -X POST \
+                            "https://app.harness.io/v1/entities/import?orgIdentifier=$ORG&projectIdentifier=$PROJ_ID" \
+                            -H "Content-Type: application/json" -H "Harness-Account: $ACCOUNT" -H "x-api-key: $KEY" \
+                            -d "{\"repo_name\": \"$SERVICE_NAME\", \"branch_name\": \"main\", \"file_path\": \"$FILE_PATH\", \"is_harness_code_repo\": true}"
+                        }
+                        RESP=$(do_import)
                         HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
                         BODY=$(echo "$RESP" | grep -v "^HTTP:")
-                        if [ "$HTTP_CODE" = "201" ]; then echo "$LABEL registered"
-                        elif echo "$BODY" | grep -q "DUPLICATE_FILE_IMPORT"; then echo "$LABEL already registered"
-                        else echo "$LABEL HTTP $HTTP_CODE"; echo "$BODY" | head -3
+                        if [ "$HTTP_CODE" = "201" ]; then
+                          echo "$LABEL registered"
+                        elif echo "$BODY" | grep -q "DUPLICATE_FILE_IMPORT"; then
+                          echo "$LABEL duplicate — purging stale source-location and retrying..."
+                          purge_stale_source_location "$FILE_PATH"
+                          sleep 3
+                          RESP=$(do_import)
+                          HTTP_CODE=$(echo "$RESP" | grep "HTTP:" | cut -d: -f2)
+                          BODY=$(echo "$RESP" | grep -v "^HTTP:")
+                          if [ "$HTTP_CODE" = "201" ]; then echo "$LABEL registered (after purge)"
+                          else echo "$LABEL still failed HTTP $HTTP_CODE: $(echo "$BODY" | head -c 200)"
+                          fi
+                        else
+                          echo "$LABEL HTTP $HTTP_CODE"; echo "$BODY" | head -c 200
                         fi
                       }
                       case "$SERVICE_TYPE" in

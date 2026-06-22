@@ -1,8 +1,8 @@
 pipeline:
   identifier: project_teardown
   name: project-teardown
-  orgIdentifier: LAB
-  projectIdentifier: IDP
+  orgIdentifier: Admin
+  projectIdentifier: IDP_Workflows
   description: "Teardown all resources created by project_setup_v2 — use between workshop attendees"
   tags:
     idp: ""
@@ -131,20 +131,54 @@ pipeline:
                     command: |-
                       KEY=<+secrets.getValue("account.harness_api_key")>
                       ACCOUNT="<+account.identifier>"
+                      ORG="<+pipeline.variables.harness_org>"
+                      PROJ_ID="<+pipeline.variables.project_identifier>"
                       SERVICE_NAME="<+pipeline.variables.service_name>"
                       SERVICE_TYPE="<+pipeline.variables.service_type>"
                       SERVICE_ID=$(echo "$SERVICE_NAME" | tr '-' '_')
 
                       del_entity() {
-                        KIND="$1" NAME="$2"
-                        HTTP=$(curl -s -o /tmp/die.txt -w "%{http_code}" -X DELETE \
-                          "https://app.harness.io/v1/entities/${KIND}/default/${NAME}" \
-                          -H "Harness-Account: $ACCOUNT" \
-                          -H "x-api-key: $KEY")
-                        if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then echo "Deregistered IDP entity: $KIND/$NAME"
-                        elif [ "$HTTP" = "404" ] || [ "$HTTP" = "400" ]; then echo "IDP entity not found (already gone): $KIND/$NAME"
-                        else echo "Deregister IDP HTTP $HTTP for $KIND/$NAME: $(cat /tmp/die.txt | head -c 200)"
+                        local KIND="$1" NAME="$2"
+                        # Try project-scoped namespace first, then default, then org
+                        for NS in "${PROJ_ID}" "default" "${ORG}"; do
+                          HTTP=$(curl -s -o /tmp/die.txt -w "%{http_code}" -X DELETE \
+                            "https://app.harness.io/v1/entities?orgIdentifier=${ORG}&projectIdentifier=${PROJ_ID}&kind=${KIND}&namespace=${NS}&identifier=${NAME}" \
+                            -H "Harness-Account: $ACCOUNT" \
+                            -H "x-api-key: $KEY")
+                          if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then
+                            echo " Deleted entity (namespace=${NS}): $KIND/$NAME"
+                            break
+                          fi
+                        done
+                        if [ "$HTTP" != "200" ] && [ "$HTTP" != "204" ]; then
+                          echo " Entity not found (may already be gone): $KIND/$NAME (last HTTP=$HTTP)"
                         fi
+                      }
+
+                      del_source_locations() {
+                        # Delete catalog location records for this service — uses idp.harness.io Backstage catalog API
+                        # This clears the "already registered" block on re-runs
+                        LOCS=$(curl -s \
+                          "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations" \
+                          -H "x-api-key: $KEY")
+                        # Filter to locations matching our service repo
+                        echo "$LOCS" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else data.get('items', [])
+svc = sys.argv[1] if len(sys.argv) > 1 else ''
+for item in items:
+    loc = item.get('data', item)
+    if svc in loc.get('target', '') or svc in str(loc):
+        print(loc.get('id', ''))
+" "$SERVICE_NAME" 2>/dev/null | while read -r LOC_ID; do
+                          [ -z "$LOC_ID" ] && continue
+                          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                            "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations/${LOC_ID}" \
+                            -H "x-api-key: $KEY")
+                          echo " Deleted catalog location ${LOC_ID}: HTTP=$HTTP"
+                        done
+                        echo "Source location cleanup done"
                       }
 
                       case "$SERVICE_TYPE" in
@@ -161,6 +195,8 @@ pipeline:
                           del_entity "component" "${SERVICE_ID}_web"
                           ;;
                       esac
+
+                      del_source_locations
                       echo "IDP cleanup done (best-effort)"
         when:
           pipelineStatus: All
