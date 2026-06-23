@@ -161,22 +161,16 @@ pipeline:
                         LOCS=$(curl -s \
                           "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations" \
                           -H "x-api-key: $KEY")
-                        # Filter to locations matching our service repo
-                        echo "$LOCS" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-items = data if isinstance(data, list) else data.get('items', [])
-svc = sys.argv[1] if len(sys.argv) > 1 else ''
-for item in items:
-    loc = item.get('data', item)
-    if svc in loc.get('target', '') or svc in str(loc):
-        print(loc.get('id', ''))
-" "$SERVICE_NAME" 2>/dev/null | while read -r LOC_ID; do
+                        # Extract all location IDs, fetch each, delete the ones matching our service name
+                        echo "$LOCS" | grep -oE '"id":"[^"]+"' | sed 's/"id":"//;s/"//' | while read -r LOC_ID; do
                           [ -z "$LOC_ID" ] && continue
-                          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-                            "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations/${LOC_ID}" \
-                            -H "x-api-key: $KEY")
-                          echo " Deleted catalog location ${LOC_ID}: HTTP=$HTTP"
+                          LOC=$(curl -s "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations/${LOC_ID}" -H "x-api-key: $KEY")
+                          if echo "$LOC" | grep -q "$SERVICE_NAME"; then
+                            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                              "https://idp.harness.io/${ACCOUNT}/idp/api/catalog/locations/${LOC_ID}" \
+                              -H "x-api-key: $KEY")
+                            echo " Deleted catalog location ${LOC_ID}: HTTP=$HTTP"
+                          fi
                         done
                         echo "Source location cleanup done"
                       }
