@@ -1,5 +1,5 @@
 # FROM node:20-alpine AS builder
-FROM python:3.4-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -15,12 +15,10 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 
-FROM nginx:alpine
+# INTENCIONALMENTE ANTIGA PARA DEMO DE SECURITY SCAN
+FROM nginx:1.14.2
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY ./nginx.conf /etc/nginx/conf.d/default.conf
-
-# INTENCIONALMENTE INSEGURO PARA DEMO DO TRIVY
-USER root
 
 EXPOSE 3000
