@@ -1,4 +1,5 @@
-FROM node:20-alpine AS builder
+# FROM node:20-alpine AS builder
+FROM python:3.4-alpine AS builder
 
 WORKDIR /app
 
