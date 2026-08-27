@@ -14,8 +14,7 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 
-# INTENCIONALMENTE ANTIGA PARA DEMO DE SECURITY SCAN
-FROM nginx:1.14.2
+FROM nginx:1.27-bookworm
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY ./nginx.conf /etc/nginx/conf.d/default.conf
