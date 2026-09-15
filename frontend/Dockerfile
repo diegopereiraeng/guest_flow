@@ -1,5 +1,7 @@
 FROM node:20-alpine AS builder
 
+RUN apk upgrade --no-cache
+
 WORKDIR /app
 
 COPY ./package*.json ./
@@ -14,8 +16,9 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 
-# INTENCIONALMENTE ANTIGA PARA DEMO DE SECURITY SCAN
-FROM nginx:1.14.2
+FROM nginx:1.27-alpine
+
+RUN apk upgrade --no-cache
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY ./nginx.conf /etc/nginx/conf.d/default.conf
